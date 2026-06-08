@@ -59,7 +59,7 @@ const LogViewer = forwardRef<LogViewerHandle, Props>(({ logs }, ref) => {
         {renderedLines.map((html, i) => (
           <div
             key={i}
-            className={`log-line ${logs[i]?.includes('[STDERR]') ? 'stderr' : ''} ${logs[i]?.includes('→ failed') ? 'failed' : ''} ${logs[i]?.includes('→ passed') ? 'passed' : ''}`}
+            className={`log-line ${logs[i]?.includes('[STDERR]') ? 'stderr' : ''} ${logs[i]?.includes('→ failed') ? 'failed' : ''} ${logs[i]?.includes('→ passed') ? 'passed' : ''} ${logs[i]?.startsWith('$ ') ? 'command' : ''}`}
             dangerouslySetInnerHTML={{ __html: html }}
           />
         ))}

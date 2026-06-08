@@ -11,6 +11,12 @@ from flask_cors import CORS
 import yaml
 from executor import TestExecutor
 
+try:
+    import webview
+    HAS_WEBVIEW = True
+except ImportError:
+    HAS_WEBVIEW = False
+
 
 def get_base_dir():
     """Return the base directory for bundled resources (PyInstaller or dev)."""
@@ -267,7 +273,13 @@ def start_execution():
     conn.close()
 
     run_id = str(uuid.uuid4())[:12]
-    executor.start_run(run_id, [dict(t) for t in tests])
+    open_console = data.get("open_console", True)
+    sdk_version = data.get("sdk_version", None)
+    # Debug log to file (since exe has no console)
+    import tempfile
+    with open(os.path.join(tempfile.gettempdir(), "test_runner_debug.log"), "a") as dbg:
+        dbg.write(f"[Execute] run_id={run_id}, sdk_version={sdk_version}\n")
+    executor.start_run(run_id, [dict(t) for t in tests], open_console=open_console, sdk_version=sdk_version)
     return jsonify({"run_id": run_id})
 
 
@@ -301,6 +313,31 @@ def get_environment():
         return jsonify({"output": str(e), "exit_code": -1})
 
 
+@app.route("/api/sdks", methods=["GET"])
+def list_sdks():
+    """List all installed .NET SDKs."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["dotnet", "--list-sdks"], capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return jsonify({"sdks": [], "error": result.stderr})
+        sdks = []
+        for line in result.stdout.strip().splitlines():
+            # Format: "8.0.100 [C:\Program Files\dotnet\sdk]"
+            parts = line.split(" [")
+            if parts:
+                version = parts[0].strip()
+                path = parts[1].rstrip("]") if len(parts) > 1 else ""
+                sdks.append({"version": version, "path": path})
+        return jsonify({"sdks": sdks})
+    except FileNotFoundError:
+        return jsonify({"sdks": [], "error": "dotnet not found in PATH"})
+    except Exception as e:
+        return jsonify({"sdks": [], "error": str(e)})
+
+
 # --- Serve React SPA ---
 
 @app.route("/", defaults={"path": ""})
@@ -312,16 +349,79 @@ def serve_spa(path):
     return send_from_directory(STATIC_DIR, "index.html")
 
 
+@app.route("/api/save-file", methods=["POST"])
+def save_file():
+    """Show a native save dialog and write content to the chosen path."""
+    data = request.json
+    content = data.get("content", "")
+    default_name = data.get("filename", "export.md")
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".md",
+            initialfile=default_name,
+            filetypes=[("Markdown files", "*.md"), ("All files", "*.*")],
+        )
+        root.destroy()
+
+        if not filepath:
+            return jsonify({"saved": False, "reason": "cancelled"})
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        return jsonify({"saved": True, "path": filepath})
+    except Exception as e:
+        return jsonify({"saved": False, "reason": str(e)}), 500
+
+
+def start_server():
+    """Start the Flask server in a background thread."""
+    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+
+
 def open_browser():
-    """Open the browser after a short delay to let the server start."""
+    """Fallback: open in browser if pywebview is unavailable."""
     import time
     time.sleep(1)
     webbrowser.open("http://localhost:5000")
 
 
+def can_use_webview():
+    """Check if pywebview can initialize without actually starting it."""
+    if not HAS_WEBVIEW:
+        return False
+    try:
+        from webview.guilib import initialize
+        initialize()
+        return True
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
     init_db()
     load_builtin_definitions()
-    print("Starting .NET SDK Test Runner on http://localhost:5000")
-    threading.Thread(target=open_browser, daemon=True).start()
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+
+    if can_use_webview():
+        print("Starting .NET SDK Test Runner (native window)...")
+        server_thread = threading.Thread(target=start_server, daemon=True)
+        server_thread.start()
+
+        webview.create_window(
+            ".NET SDK Test Runner",
+            "http://127.0.0.1:5000",
+            width=1280,
+            height=800,
+            min_size=(900, 600),
+        )
+        webview.start()
+    else:
+        print("Starting .NET SDK Test Runner on http://localhost:5000")
+        threading.Thread(target=open_browser, daemon=True).start()
+        app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)

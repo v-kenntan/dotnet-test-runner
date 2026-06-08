@@ -61,11 +61,11 @@ export async function deleteTest(id: string): Promise<void> {
   await fetch(`${API_BASE}/tests/${id}`, { method: 'DELETE' });
 }
 
-export async function startExecution(testIds: string[]): Promise<{ run_id: string }> {
+export async function startExecution(testIds: string[], sdkVersion?: string): Promise<{ run_id: string }> {
   const res = await fetch(`${API_BASE}/execute`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ test_ids: testIds }),
+    body: JSON.stringify({ test_ids: testIds, sdk_version: sdkVersion || null }),
   });
   return res.json();
 }
@@ -106,5 +106,15 @@ export async function fetchStepResults(runId: string, resultId: string): Promise
 
 export async function fetchEnvironment(): Promise<{ output: string; exit_code: number }> {
   const res = await fetch(`${API_BASE}/environment`);
+  return res.json();
+}
+
+export interface SdkEntry {
+  version: string;
+  path: string;
+}
+
+export async function fetchSdks(): Promise<{ sdks: SdkEntry[]; error?: string }> {
+  const res = await fetch(`${API_BASE}/sdks`);
   return res.json();
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, deleteTest, TestRun } from './api'
+import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, deleteTest, TestRun, fetchRunDetails, fetchStepResults } from './api'
 import TestList from './components/TestList'
 import TestRunner from './components/TestRunner'
 import LogViewer from './components/LogViewer'
@@ -21,13 +21,29 @@ export default function App() {
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [editingTest, setEditingTest] = useState<TestCase | null>(null);
   const [sdkInfo, setSdkInfo] = useState<string | null>(null);
+  const [sdkLoading, setSdkLoading] = useState(false);
+  const [sdkList, setSdkList] = useState<SdkEntry[]>([]);
+  const [selectedSdk, setSelectedSdk] = useState<string>('');
+  const [runnerTests, setRunnerTests] = useState<TestCase[]>([]);
   const logViewerRef = useRef<LogViewerHandle>(null);
+
+  const refreshSdk = useCallback(async () => {
+    setSdkLoading(true);
+    try {
+      const [env, sdkData] = await Promise.all([fetchEnvironment(), fetchSdks()]);
+      setSdkInfo(env.exit_code === 0 ? env.output : null);
+      setSdkList(sdkData.sdks || []);
+      if (sdkData.sdks?.length > 0) {
+        setSelectedSdk(prev => prev || sdkData.sdks[sdkData.sdks.length - 1].version);
+      }
+    } finally {
+      setSdkLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchTests().then(setTests);
-    fetchEnvironment().then(env => {
-      setSdkInfo(env.exit_code === 0 ? env.output : null);
-    });
+    refreshSdk();
   }, []);
 
   const handleSelectAll = useCallback((category?: string) => {
@@ -69,9 +85,10 @@ export default function App() {
     setSummary(null);
     setTestStatuses({});
     setRunStatus('running');
+    setRunnerTests(tests.filter(t => selectedIds.has(t.id)));
     setView('running');
 
-    const { run_id } = await startExecution(Array.from(selectedIds));
+    const { run_id } = await startExecution(Array.from(selectedIds), selectedSdk);
     setRunId(run_id);
 
     streamExecution(run_id, (event: StreamEvent) => {
@@ -102,7 +119,7 @@ export default function App() {
           break;
       }
     });
-  }, [selectedIds]);
+  }, [selectedIds, selectedSdk, tests]);
 
   const handleCancel = useCallback(async () => {
     if (runId) {
@@ -116,6 +133,56 @@ export default function App() {
     setRuns(data);
     setView('history');
   }, []);
+
+  const handleViewRun = useCallback(async (run: TestRun) => {
+    const { results } = await fetchRunDetails(run.id);
+    const reconstructedLogs: string[] = [];
+    const statuses: Record<string, string> = {};
+
+    reconstructedLogs.push(`▶ Run started (${results.length} tests)`);
+
+    for (const result of results as any[]) {
+      const test = tests.find(t => t.id === result.test_case_id);
+      const title = test?.title || result.test_case_id;
+      reconstructedLogs.push(`\n━━━ ${title} ━━━`);
+      statuses[result.test_case_id] = result.status;
+
+      // Fetch step details for this result
+      const steps = await fetchStepResults(run.id, result.id) as any[];
+      for (const step of steps) {
+        if (step.command) {
+          reconstructedLogs.push(`$ ${step.command}`);
+        }
+        if (step.stdout) {
+          const lines = step.stdout.split('\n').filter((l: string) => l);
+          reconstructedLogs.push(...lines);
+        }
+        if (step.stderr) {
+          const lines = step.stderr.split('\n').filter((l: string) => l);
+          reconstructedLogs.push(...lines.map((l: string) => `[STDERR] ${l}`));
+        }
+      }
+
+      reconstructedLogs.push(`  ${result.status === 'passed' ? '✅ PASSED' : '❌ FAILED'}`);
+    }
+
+    const parsedSummary = run.summary ? JSON.parse(run.summary) : null;
+    if (parsedSummary) {
+      reconstructedLogs.push(`\n✅ Run complete: ${JSON.stringify(parsedSummary)}`);
+    }
+
+    setLogs(reconstructedLogs);
+    setTestStatuses(statuses);
+    setSummary(parsedSummary);
+    setRunStatus(run.status === 'completed' ? 'completed' : run.status === 'cancelled' ? 'cancelled' : 'completed');
+    // Set the tests that were part of this historical run
+    const runTests = (results as any[]).map(r => {
+      const found = tests.find(t => t.id === r.test_case_id);
+      return found || { id: r.test_case_id, title: r.test_case_id, category: '', description: '', steps: [], is_builtin: false, is_machine_mutating: false } as TestCase;
+    });
+    setRunnerTests(runTests);
+    setView('running');
+  }, [tests]);
 
   const handleRefreshTests = useCallback(async () => {
     const data = await fetchTests();
@@ -155,19 +222,45 @@ export default function App() {
         {sdkInfo !== null ? (
           <div className="sdk-banner sdk-found">
             <span className="sdk-icon">✓</span>
-            <span className="sdk-text">
-              {(() => {
-                const versionMatch = sdkInfo.match(/Version:\s+(\S+)/);
-                const osMatch = sdkInfo.match(/OS Name:\s+(.+)/);
-                const ridMatch = sdkInfo.match(/RID:\s+(\S+)/);
-                return `SDK ${versionMatch?.[1] || 'unknown'} | ${osMatch?.[1]?.trim() || 'unknown OS'} | ${ridMatch?.[1] || ''}`;
-              })()}
-            </span>
+            {sdkList.length > 1 ? (
+              <span className="sdk-text">
+                SDK{' '}
+                <select
+                  className="sdk-select"
+                  value={selectedSdk}
+                  onChange={(e) => setSelectedSdk(e.target.value)}
+                >
+                  {sdkList.map(sdk => (
+                    <option key={sdk.version} value={sdk.version}>{sdk.version}</option>
+                  ))}
+                </select>
+                {(() => {
+                  const osMatch = sdkInfo.match(/OS Name:\s+(.+)/);
+                  const ridMatch = sdkInfo.match(/RID:\s+(\S+)/);
+                  return ` | ${osMatch?.[1]?.trim() || 'unknown OS'} | ${ridMatch?.[1] || ''}`;
+                })()}
+              </span>
+            ) : (
+              <span className="sdk-text">
+                {(() => {
+                  const versionMatch = sdkInfo.match(/Version:\s+(\S+)/);
+                  const osMatch = sdkInfo.match(/OS Name:\s+(.+)/);
+                  const ridMatch = sdkInfo.match(/RID:\s+(\S+)/);
+                  return `SDK ${versionMatch?.[1] || 'unknown'} | ${osMatch?.[1]?.trim() || 'unknown OS'} | ${ridMatch?.[1] || ''}`;
+                })()}
+              </span>
+            )}
+            <button className="sdk-refresh-btn" onClick={refreshSdk} disabled={sdkLoading}>
+              {sdkLoading ? '⏳' : '↻'} Refresh
+            </button>
           </div>
         ) : (
           <div className="sdk-banner sdk-missing">
             <span className="sdk-icon">⚠</span>
-            <span className="sdk-text">No .NET SDK detected — install one and restart the app</span>
+            <span className="sdk-text">No .NET SDK detected — install one and click Retry</span>
+            <button className="sdk-refresh-btn" onClick={refreshSdk} disabled={sdkLoading}>
+              {sdkLoading ? '⏳' : '↻'} Retry
+            </button>
           </div>
         )}
       </header>
@@ -197,12 +290,12 @@ export default function App() {
           <TestRunner
             status={runStatus}
             testStatuses={testStatuses}
-            tests={tests.filter(t => selectedIds.has(t.id))}
+            tests={runnerTests}
             onCancel={handleCancel}
             onTestClick={(title) => logViewerRef.current?.scrollToTest(title)}
           >
             <LogViewer ref={logViewerRef} logs={logs} />
-            {summary && <ResultsSummary summary={summary} logs={logs} testStatuses={testStatuses} tests={tests.filter(t => selectedIds.has(t.id))} />}
+            {summary && <ResultsSummary summary={summary} logs={logs} testStatuses={testStatuses} tests={runnerTests} />}
           </TestRunner>
         )}
 
@@ -215,7 +308,7 @@ export default function App() {
               </thead>
               <tbody>
                 {runs.map(run => (
-                  <tr key={run.id}>
+                  <tr key={run.id} className="history-row clickable" onClick={() => handleViewRun(run)}>
                     <td>{run.id}</td>
                     <td>{run.started_at}</td>
                     <td><span className={`badge badge-${run.status}`}>{run.status}</span></td>

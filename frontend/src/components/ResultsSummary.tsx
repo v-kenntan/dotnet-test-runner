@@ -39,12 +39,31 @@ function generateMarkdown(summary: Props['summary'], logs: string[], testStatuse
   return md;
 }
 
-function downloadMarkdown(content: string) {
+async function downloadMarkdown(content: string) {
+  const filename = `test-run-${new Date().toISOString().slice(0, 10)}.md`;
+  try {
+    const res = await fetch('/api/save-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, filename }),
+    });
+    const data = await res.json();
+    if (!data.saved && data.reason !== 'cancelled') {
+      // Fallback to blob download (browser mode)
+      blobDownload(content, filename);
+    }
+  } catch {
+    // Fallback to blob download if backend unavailable
+    blobDownload(content, filename);
+  }
+}
+
+function blobDownload(content: string, filename: string) {
   const blob = new Blob([content], { type: 'text/markdown' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `test-run-${new Date().toISOString().slice(0, 10)}.md`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -54,9 +73,9 @@ function downloadMarkdown(content: string) {
 export default function ResultsSummary({ summary, logs, testStatuses, tests }: Props) {
   const total = summary.passed + summary.failed + summary.skipped;
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const md = generateMarkdown(summary, logs, testStatuses, tests);
-    downloadMarkdown(md);
+    await downloadMarkdown(md);
   };
 
   return (

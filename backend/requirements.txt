@@ -1,3 +1,6 @@
 flask==3.1.0
 flask-cors==5.0.1
 pyyaml==6.0.2
+pythonnet>=3.0.3
+pywebview>=5.3
+pywinauto>=0.6.8

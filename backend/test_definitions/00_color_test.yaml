@@ -7,25 +7,25 @@ tests:
     sort_order: 0
     steps:
       - type: command
-        command: "powershell -Command \"Write-Host '✓ GREEN - Success message' -ForegroundColor Green\""
+        command: "powershell -Command \"$e=[char]27; Write-Output \\\"${e}[32m✓ GREEN - Success message${e}[0m\\\"\""
         timeout: 10
       - type: command
-        command: "powershell -Command \"Write-Host '✗ RED - Error message' -ForegroundColor Red\""
+        command: "powershell -Command \"$e=[char]27; Write-Output \\\"${e}[31m✗ RED - Error message${e}[0m\\\"\""
         timeout: 10
       - type: command
-        command: "powershell -Command \"Write-Host '⚠ YELLOW - Warning message' -ForegroundColor Yellow\""
+        command: "powershell -Command \"$e=[char]27; Write-Output \\\"${e}[33m⚠ YELLOW - Warning message${e}[0m\\\"\""
         timeout: 10
       - type: command
-        command: "powershell -Command \"Write-Host 'ℹ BLUE - Info message' -ForegroundColor Blue\""
+        command: "powershell -Command \"$e=[char]27; Write-Output \\\"${e}[34mℹ BLUE - Info message${e}[0m\\\"\""
         timeout: 10
       - type: command
-        command: "powershell -Command \"Write-Host '♦ MAGENTA - Debug message' -ForegroundColor Magenta\""
+        command: "powershell -Command \"$e=[char]27; Write-Output \\\"${e}[35m♦ MAGENTA - Debug message${e}[0m\\\"\""
         timeout: 10
       - type: command
-        command: "powershell -Command \"Write-Host '● CYAN - Highlight message' -ForegroundColor Cyan\""
+        command: "powershell -Command \"$e=[char]27; Write-Output \\\"${e}[36m● CYAN - Highlight message${e}[0m\\\"\""
         timeout: 10
       - type: command
-        command: "powershell -Command \"Write-Host 'BOLD GREEN' -ForegroundColor Green -NoNewline; Write-Host ' and ' -NoNewline; Write-Host 'BOLD RED' -ForegroundColor Red\""
+        command: "powershell -Command \"$e=[char]27; Write-Output \\\"${e}[1;32mBOLD GREEN${e}[0m and ${e}[1;31mBOLD RED${e}[0m\\\"\""
         timeout: 10
       - type: command
         command: "dotnet --version"
