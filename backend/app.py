@@ -66,7 +66,8 @@ def init_db():
             finished_at TEXT,
             status TEXT DEFAULT 'pending',
             environment_info TEXT,
-            summary TEXT
+            summary TEXT,
+            sdk_version TEXT
         );
         CREATE TABLE IF NOT EXISTS test_results (
             id TEXT PRIMARY KEY,
@@ -93,6 +94,11 @@ def init_db():
             FOREIGN KEY (test_result_id) REFERENCES test_results(id)
         );
     """)
+    # Migrate: add sdk_version column if missing (for existing DBs)
+    try:
+        conn.execute("ALTER TABLE test_runs ADD COLUMN sdk_version TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.commit()
     conn.close()
 
