@@ -28,6 +28,7 @@ export interface TestRun {
   status: string;
   environment_info: string;
   summary: string | null;
+  sdk_version: string | null;
 }
 
 export interface StreamEvent {

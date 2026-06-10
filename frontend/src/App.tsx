@@ -1,16 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, deleteTest, TestRun, fetchRunDetails, fetchStepResults } from './api'
+import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, deleteTest, TestRun, fetchRunDetails } from './api'
 import TestList from './components/TestList'
 import TestRunner from './components/TestRunner'
 import LogViewer from './components/LogViewer'
 import { LogViewerHandle } from './components/LogViewer'
 import ResultsSummary from './components/ResultsSummary'
 import TestEditor from './components/TestEditor'
+import Dashboard from './components/Dashboard'
+import RunDetail from './components/RunDetail'
 
-type View = 'tests' | 'running' | 'history' | 'editor';
+type View = 'dashboard' | 'tests' | 'running' | 'history_detail' | 'editor';
 
 export default function App() {
-  const [view, setView] = useState<View>('tests');
+  const [view, setView] = useState<View>('dashboard');
   const [tests, setTests] = useState<TestCase[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [runId, setRunId] = useState<string | null>(null);
@@ -25,6 +27,8 @@ export default function App() {
   const [sdkList, setSdkList] = useState<SdkEntry[]>([]);
   const [selectedSdk, setSelectedSdk] = useState<string>('');
   const [runnerTests, setRunnerTests] = useState<TestCase[]>([]);
+  const [selectedRun, setSelectedRun] = useState<TestRun | null>(null);
+  const [runResults, setRunResults] = useState<any[]>([]);
   const logViewerRef = useRef<LogViewerHandle>(null);
 
   const refreshSdk = useCallback(async () => {
@@ -43,8 +47,16 @@ export default function App() {
 
   useEffect(() => {
     fetchTests().then(setTests);
+    fetchRuns().then(setRuns);
     refreshSdk();
   }, []);
+
+  // Refresh runs whenever navigating back to dashboard
+  useEffect(() => {
+    if (view === 'dashboard') {
+      fetchRuns().then(setRuns);
+    }
+  }, [view]);
 
   const handleSelectAll = useCallback((category?: string) => {
     if (category) {
@@ -128,61 +140,80 @@ export default function App() {
     }
   }, [runId]);
 
-  const handleViewHistory = useCallback(async () => {
-    const data = await fetchRuns();
-    setRuns(data);
-    setView('history');
-  }, []);
-
   const handleViewRun = useCallback(async (run: TestRun) => {
     const { results } = await fetchRunDetails(run.id);
-    const reconstructedLogs: string[] = [];
-    const statuses: Record<string, string> = {};
-
-    reconstructedLogs.push(`▶ Run started (${results.length} tests)`);
-
-    for (const result of results as any[]) {
-      const test = tests.find(t => t.id === result.test_case_id);
-      const title = test?.title || result.test_case_id;
-      reconstructedLogs.push(`\n━━━ ${title} ━━━`);
-      statuses[result.test_case_id] = result.status;
-
-      // Fetch step details for this result
-      const steps = await fetchStepResults(run.id, result.id) as any[];
-      for (const step of steps) {
-        if (step.command) {
-          reconstructedLogs.push(`$ ${step.command}`);
-        }
-        if (step.stdout) {
-          const lines = step.stdout.split('\n').filter((l: string) => l);
-          reconstructedLogs.push(...lines);
-        }
-        if (step.stderr) {
-          const lines = step.stderr.split('\n').filter((l: string) => l);
-          reconstructedLogs.push(...lines.map((l: string) => `[STDERR] ${l}`));
-        }
-      }
-
-      reconstructedLogs.push(`  ${result.status === 'passed' ? '✅ PASSED' : '❌ FAILED'}`);
-    }
-
-    const parsedSummary = run.summary ? JSON.parse(run.summary) : null;
-    if (parsedSummary) {
-      reconstructedLogs.push(`\n✅ Run complete: ${JSON.stringify(parsedSummary)}`);
-    }
-
-    setLogs(reconstructedLogs);
-    setTestStatuses(statuses);
-    setSummary(parsedSummary);
-    setRunStatus(run.status === 'completed' ? 'completed' : run.status === 'cancelled' ? 'cancelled' : 'completed');
-    // Set the tests that were part of this historical run
-    const runTests = (results as any[]).map(r => {
-      const found = tests.find(t => t.id === r.test_case_id);
-      return found || { id: r.test_case_id, title: r.test_case_id, category: '', description: '', steps: [], is_builtin: false, is_machine_mutating: false } as TestCase;
+    // Enrich results with test titles
+    const enrichedResults = (results as any[]).map(r => {
+      const test = tests.find(t => t.id === r.test_case_id);
+      return { ...r, title: test?.title || r.test_case_id, category: test?.category || '' };
     });
-    setRunnerTests(runTests);
-    setView('running');
+    setSelectedRun(run);
+    setRunResults(enrichedResults);
+    setView('history_detail');
   }, [tests]);
+
+  const handleRetryRun = useCallback(async (run: TestRun) => {
+    if (runStatus === 'running') return;
+    const { results } = await fetchRunDetails(run.id);
+    const testIds = (results as any[]).map((r: any) => r.test_case_id as string);
+    if (testIds.length === 0) return;
+
+    // Check for deleted tests
+    const availableIds = testIds.filter(id => tests.some(t => t.id === id));
+    const missingCount = testIds.length - availableIds.length;
+
+    if (availableIds.length === 0) {
+      alert('All tests from this run have been deleted. Cannot retry.');
+      return;
+    }
+
+    if (missingCount > 0) {
+      const proceed = window.confirm(
+        `${missingCount} test${missingCount > 1 ? 's' : ''} from this run ha${missingCount > 1 ? 've' : 's'} been deleted. Continue with the remaining ${availableIds.length} test${availableIds.length > 1 ? 's' : ''}?`
+      );
+      if (!proceed) return;
+    }
+
+    const sdkVersion = run.sdk_version || selectedSdk;
+
+    setLogs([]);
+    setSummary(null);
+    setTestStatuses({});
+    setRunStatus('running');
+    setRunnerTests(tests.filter(t => availableIds.includes(t.id)));
+    setView('running');
+
+    const { run_id } = await startExecution(availableIds, sdkVersion);
+    setRunId(run_id);
+
+    streamExecution(run_id, (event: StreamEvent) => {
+      switch (event.type) {
+        case 'run_start':
+          setLogs(prev => [...prev, `▶ Run started (${event.total_tests} tests)`]);
+          break;
+        case 'test_start':
+          setLogs(prev => [...prev, `\n━━━ ${event.title} ━━━`]);
+          setTestStatuses(prev => ({ ...prev, [event.test_case_id as string]: 'running' }));
+          break;
+        case 'step_output':
+          setLogs(prev => [...prev, event.line as string]);
+          break;
+        case 'step_end':
+          break;
+        case 'test_end':
+          setTestStatuses(prev => ({ ...prev, [event.test_case_id as string]: event.status as string }));
+          setLogs(prev => [...prev, `  ${event.status === 'passed' ? '✅ PASSED' : '❌ FAILED'}`]);
+          break;
+        case 'run_end':
+          setRunStatus('completed');
+          setSummary(event.summary as { passed: number; failed: number; skipped: number });
+          setLogs(prev => [...prev, `\n✅ Run complete: ${JSON.stringify(event.summary)}`]);
+          break;
+        case 'heartbeat':
+          break;
+      }
+    });
+  }, [runStatus, selectedSdk, tests]);
 
   const handleRefreshTests = useCallback(async () => {
     const data = await fetchTests();
@@ -213,10 +244,10 @@ export default function App() {
         <div className="header-top">
           <h1>🧪 .NET SDK Test Runner</h1>
           <nav>
+            <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>
             <button className={view === 'tests' ? 'active' : ''} onClick={() => setView('tests')}>Tests</button>
             <button className={view === 'running' ? 'active' : ''} onClick={() => setView('running')}>Runner</button>
-            <button className={view === 'history' ? 'active' : ''} onClick={handleViewHistory}>History</button>
-            <button className={view === 'editor' ? 'active' : ''} onClick={() => { setEditingTest(null); setView('editor'); }}>+ Add Test</button>
+            <button onClick={() => { setEditingTest(null); setView('editor'); }}>+ Add Test</button>
           </nav>
         </div>
         {sdkInfo !== null ? (
@@ -266,13 +297,17 @@ export default function App() {
       </header>
 
       <main className="main">
+        {view === 'dashboard' && (
+          <Dashboard runs={runs} onViewRun={handleViewRun} onRetryRun={handleRetryRun} isRunning={runStatus === 'running'} />
+        )}
+
         {view === 'tests' && (
           <div className="tests-view">
             <div className="toolbar">
               <button onClick={() => handleSelectAll()}>Select All</button>
               <button onClick={handleDeselectAll}>Deselect All</button>
-              <button className="run-btn" onClick={handleRun} disabled={selectedIds.size === 0}>
-                ▶ Run Selected ({selectedIds.size})
+              <button className="run-btn" onClick={handleRun} disabled={selectedIds.size === 0 || runStatus === 'running'}>
+                {runStatus === 'running' ? '⏳ Running...' : `▶ Run Selected (${selectedIds.size})`}
               </button>
             </div>
             <TestList
@@ -299,25 +334,8 @@ export default function App() {
           </TestRunner>
         )}
 
-        {view === 'history' && (
-          <div className="history-view">
-            <h2>Run History</h2>
-            <table>
-              <thead>
-                <tr><th>ID</th><th>Started</th><th>Status</th><th>Summary</th></tr>
-              </thead>
-              <tbody>
-                {runs.map(run => (
-                  <tr key={run.id} className="history-row clickable" onClick={() => handleViewRun(run)}>
-                    <td>{run.id}</td>
-                    <td>{run.started_at}</td>
-                    <td><span className={`badge badge-${run.status}`}>{run.status}</span></td>
-                    <td>{run.summary || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {view === 'history_detail' && selectedRun && (
+          <RunDetail run={selectedRun} results={runResults} tests={tests} onBack={() => setView('dashboard')} />
         )}
 
         {view === 'editor' && (

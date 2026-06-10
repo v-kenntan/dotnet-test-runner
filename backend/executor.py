@@ -47,8 +47,8 @@ class TestExecutor:
 
         conn = get_db()
         conn.execute(
-            "INSERT INTO test_runs (id, started_at, status) VALUES (?, ?, ?)",
-            (run_id, datetime.now().isoformat(), "running"),
+            "INSERT INTO test_runs (id, started_at, status, sdk_version) VALUES (?, ?, ?, ?)",
+            (run_id, datetime.now().isoformat(), "running", sdk_version),
         )
         conn.commit()
         conn.close()
