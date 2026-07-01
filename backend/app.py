@@ -422,23 +422,24 @@ def open_browser():
     webbrowser.open("http://localhost:5000")
 
 
-def can_use_webview():
-    """Check if pywebview can initialize without actually starting it."""
-    if not HAS_WEBVIEW:
-        return False
-    try:
-        from webview.guilib import initialize
-        initialize()
-        return True
-    except Exception:
-        return False
-
-
 if __name__ == "__main__":
     init_db()
     load_builtin_definitions()
 
-    if can_use_webview():
+    # Explicit, documented launch mode. APP_MODE=native|web (default: native).
+    # ponytail: env var picks the mode directly — no runtime probe, because
+    # webview.guilib.initialize() succeeds/fails nondeterministically in the
+    # built exe and was the cause of the inconsistent launch mode.
+    mode = os.environ.get("APP_MODE", "native").strip().lower()
+    if mode not in ("native", "web"):
+        print(f"Unknown APP_MODE={mode!r}, falling back to 'native'.")
+        mode = "native"
+
+    if mode == "native" and not HAS_WEBVIEW:
+        print("APP_MODE=native but pywebview is not installed; using web mode.")
+        mode = "web"
+
+    if mode == "native":
         print("Starting .NET SDK Test Runner (native window)...")
         server_thread = threading.Thread(target=start_server, daemon=True)
         server_thread.start()
