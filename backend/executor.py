@@ -220,6 +220,22 @@ class TestExecutor:
         )
         conn.commit()
 
+        # Record the SDK actually resolved by dotnet (a pinned version may be
+        # gone from the machine and silently roll forward). Log what really runs.
+        pinned = self._runs.get(run_id, {}).get("sdk_version") or None
+        actual = self._resolve_sdk_version(pinned)
+        if actual:
+            self._runs[run_id]["sdk_version"] = actual
+            conn.execute(
+                "UPDATE test_runs SET sdk_version=? WHERE id=?", (actual, run_id)
+            )
+            conn.commit()
+            if pinned and actual != pinned:
+                self._queue_console_cmd(
+                    run_id,
+                    f"echo [warn] pinned SDK {pinned} not installed; running {actual}",
+                )
+
         self._emit_event(run_id, {
             "type": "run_start",
             "run_id": run_id,
@@ -678,6 +694,39 @@ class TestExecutor:
             stderr_lines.append(str(e))
 
         return ("".join(stdout_lines), "".join(stderr_lines), exit_code)
+
+    def _resolve_sdk_version(self, pinned: str = None) -> str:
+        """Return the SDK version dotnet actually resolves for this run.
+
+        Resolves using the same global.json the test steps use so history logs
+        the version that really executes, not a stale pinned string. Falls back
+        to the unpinned default when the pinned version is no longer installed.
+        """
+        def dotnet_version(cwd):
+            try:
+                r = subprocess.run(
+                    ["dotnet", "--version"], capture_output=True, text=True,
+                    timeout=30, cwd=cwd,
+                )
+                return r.stdout.strip() if r.returncode == 0 else None
+            except Exception:
+                return None
+
+        if not pinned:
+            return dotnet_version(None)
+
+        d = tempfile.mkdtemp(prefix="sdk_resolve_")
+        try:
+            with open(os.path.join(d, "global.json"), "w") as f:
+                json.dump({"sdk": {"version": pinned, "rollForward": "disable"}}, f)
+            # ponytail: unpinned fallback = version that actually runs when pinned is gone
+            return dotnet_version(d) or dotnet_version(None)
+        finally:
+            try:
+                os.remove(os.path.join(d, "global.json"))
+                os.rmdir(d)
+            except OSError:
+                pass
 
     def _capture_environment(self) -> str:
         try:
