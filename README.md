@@ -8,9 +8,9 @@ A standalone application for automating .NET SDK test execution on Windows VMs. 
 
 1. Copy the `dotnet-test-runner` folder to your VM
 2. Run `dotnet-test-runner.exe`
-3. Opens in a native window by default (falls back to the browser at http://localhost:5000 if the native UI is unavailable)
+3. Opens in a dedicated app window (a chromeless Microsoft Edge window — no tabs, no address bar). Falls back to your default browser at http://localhost:5000 if no Edge/Chrome is installed.
 
-To force browser/web mode, set the environment variable `APP_MODE=web` before launching. `APP_MODE=native` (the default) uses the native window.
+To force browser/web mode, set the environment variable `APP_MODE=web` before launching. `APP_MODE=native` (the default) uses the app window.
 
 ## Selecting a specific SDK install (e.g. zip vs. exe)
 

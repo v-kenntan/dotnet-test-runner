@@ -38,7 +38,7 @@ echo  Output: dist\dotnet-test-runner\dotnet-test-runner.exe
 echo ============================================
 echo.
 echo Copy the entire dist\dotnet-test-runner\ folder to your target VM and run dotnet-test-runner.exe
-echo The browser will open automatically.
+echo The application window will open automatically.
 echo.
 pause
 exit /b 0
