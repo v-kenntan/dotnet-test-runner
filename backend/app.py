@@ -1,7 +1,11 @@
 import os
 import sys
 import json
+import shutil
+import socket
 import sqlite3
+import subprocess
+import tempfile
 import uuid
 import webbrowser
 import threading
@@ -9,12 +13,6 @@ from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
 import yaml
 from executor import TestExecutor
-
-try:
-    import webview
-    HAS_WEBVIEW = True
-except ImportError:
-    HAS_WEBVIEW = False
 
 
 def get_base_dir():
@@ -461,44 +459,114 @@ def start_server():
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
 
 
-def open_browser():
-    """Fallback: open in browser if pywebview is unavailable."""
+APP_URL = "http://127.0.0.1:5000"
+
+# Chromium "--app" mode gives a chromeless window: no tabs, no address bar.
+# ponytail: Edge ships with Windows, so this needs no CLR, no pythonnet and no
+# extra dependency — which is exactly what made issue #57 possible.
+BROWSER_CANDIDATES = [
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+]
+
+
+def find_app_host():
+    """Path to a Chromium binary that supports --app, or None."""
+    for path in BROWSER_CANDIDATES:
+        if os.path.exists(path):
+            return path
+    return shutil.which("msedge") or shutil.which("chrome")
+
+
+def wait_for_server(port=5000, timeout=20.0):
+    """Block until the Flask server accepts connections. False on timeout."""
     import time
-    time.sleep(1)
-    webbrowser.open("http://localhost:5000")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.1)
+    return False
+
+
+def wait_for_window_close(profile, timeout=15.0):
+    """Block while the app window is open.
+
+    Chromium holds an exclusive handle on <profile>/lockfile for its lifetime,
+    so a failed rename means "still running". ponytail: cheaper and more
+    portable than walking the process table for our --user-data-dir.
+    Returns False if the lock never appeared (nothing to wait on).
+    """
+    import time
+    lock = os.path.join(profile, "lockfile")
+    deadline = time.monotonic() + timeout
+    while not os.path.exists(lock):
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.25)
+    while True:
+        if not os.path.exists(lock):
+            return True  # Chromium removes the lock on a clean exit
+        try:
+            os.rename(lock, lock + ".probe")
+            os.rename(lock + ".probe", lock)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            time.sleep(1.0)
+
+
+def run_app_window():
+    """Open the GUI window and block until the user closes it. False if unavailable."""
+    host = find_app_host()
+    if not host:
+        print("No Edge/Chrome found for app-window mode; falling back to browser.")
+        return False
+    # A dedicated profile keeps this window out of the user's normal browser
+    # session and gives us a lockfile to wait on.
+    profile = os.path.join(tempfile.gettempdir(), "dotnet-test-runner-window")
+    try:
+        subprocess.Popen([
+            host,
+            f"--app={APP_URL}",
+            f"--user-data-dir={profile}",
+            "--window-size=1280,800",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ])
+    except OSError as e:
+        print(f"App window unavailable ({e}); falling back to browser.")
+        return False
+    if not wait_for_window_close(profile):
+        # Window is up but unobservable — keep serving rather than exiting.
+        threading.Event().wait()
+    return True
 
 
 if __name__ == "__main__":
     init_db()
     load_builtin_definitions()
 
-    # Explicit, documented launch mode. APP_MODE=native|web (default: native).
-    # ponytail: env var picks the mode directly — no runtime probe, because
-    # webview.guilib.initialize() succeeds/fails nondeterministically in the
-    # built exe and was the cause of the inconsistent launch mode.
+    # APP_MODE=native|web (default: native). native = chromeless GUI window.
     mode = os.environ.get("APP_MODE", "native").strip().lower()
     if mode not in ("native", "web"):
         print(f"Unknown APP_MODE={mode!r}, falling back to 'native'.")
         mode = "native"
 
-    if mode == "native" and not HAS_WEBVIEW:
-        print("APP_MODE=native but pywebview is not installed; using web mode.")
-        mode = "web"
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
+    wait_for_server()
 
     if mode == "native":
-        print("Starting .NET SDK Test Runner (native window)...")
-        server_thread = threading.Thread(target=start_server, daemon=True)
-        server_thread.start()
+        print("Starting .NET SDK Test Runner (app window)...")
+        if run_app_window():
+            sys.exit(0)
 
-        webview.create_window(
-            ".NET SDK Test Runner",
-            "http://127.0.0.1:5000",
-            width=1280,
-            height=800,
-            min_size=(900, 600),
-        )
-        webview.start()
-    else:
-        print("Starting .NET SDK Test Runner on http://localhost:5000")
-        threading.Thread(target=open_browser, daemon=True).start()
-        app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    print(f"Starting .NET SDK Test Runner on {APP_URL}")
+    webbrowser.open(APP_URL)
+    server_thread.join()
