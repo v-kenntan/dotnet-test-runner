@@ -15,6 +15,13 @@ from datetime import datetime
 from queue import Queue, Empty
 from typing import Dict, List, Generator
 
+# Read-only fixtures shipped with the app (e.g. sample projects that tests
+# copy into their work dir). Resolves under PyInstaller's _MEIPASS when bundled.
+ASSETS_DIR = os.path.join(
+    getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__)),
+    "test_assets",
+)
+
 
 def _render_terminal_output(text: str) -> str:
     """Collapse a terminal-logger animation stream into the final rendered
@@ -481,7 +488,7 @@ class TestExecutor:
             expected_exit = step.get("expected_exit_code", 0)
 
             if step_type == "command":
-                cmd = step["command"].replace("{tfm}", tfm)
+                cmd = step["command"].replace("{tfm}", tfm).replace("{assets}", ASSETS_DIR)
                 # Handle cd commands by updating current_dir
                 if cmd.strip().startswith("cd "):
                     prev_dir = current_dir
@@ -643,7 +650,7 @@ class TestExecutor:
             elif step_type == "write_file":
                 filepath = os.path.join(current_dir, step["path"])
                 os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                content = step["content"].replace("{tfm}", tfm)
+                content = step["content"].replace("{tfm}", tfm).replace("{assets}", ASSETS_DIR)
 
                 start_time = time.time()
                 wrote_via_notepad = False
@@ -768,6 +775,9 @@ class TestExecutor:
             with open(wrapper_file, "w", encoding="utf-8") as wf:
                 wf.write("@echo off\n")
                 wf.write("set MSBUILDTERMINALLOGGER=on\n")
+                # The spawned console can inherit a PATH without System32, which
+                # breaks stock tools like xcopy/findstr. Put it back.
+                wf.write('set "PATH=%PATH%;%SystemRoot%\\System32"\n')
                 if root:
                     # Point dotnet at the pinned SDK install for this run.
                     wf.write(f'set "DOTNET_ROOT={root}"\n')

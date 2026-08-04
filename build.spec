@@ -13,6 +13,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (os.path.join(backend_dir, 'test_definitions'), 'test_definitions'),
+        (os.path.join(backend_dir, 'test_assets'), 'test_assets'),
         (os.path.join(backend_dir, 'static'), 'static'),
     ],
     hiddenimports=[

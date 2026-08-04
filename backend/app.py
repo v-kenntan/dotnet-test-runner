@@ -136,6 +136,12 @@ def load_builtin_definitions():
         for test in data["tests"]:
             test_id = test["id"]
             if test_id in existing:
+                # Already seeded: only refresh ordering, so inserting a test in
+                # the middle of the list reorders existing DBs too.
+                conn.execute(
+                    "UPDATE test_cases SET sort_order = ? WHERE id = ? AND is_builtin = 1",
+                    (test.get("sort_order", 999), test_id),
+                )
                 continue
             conn.execute(
                 """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path)

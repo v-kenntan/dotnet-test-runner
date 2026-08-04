@@ -1,0 +1,29 @@
+tests:
+- id: sample-01-build-run
+  category: Sample Projects
+  title: 1. Build and run a bundled sample project
+  description: >-
+    Copy the bundled sample console app + class libraries shipped under
+    test_assets/samples/<tfm> for the SDK under test, then build and run it via
+    both the dll and the apphost. Requires a test_assets/samples/<tfm> folder
+    for the selected SDK.
+  steps:
+  - type: command
+    command: xcopy /e /i /q "{assets}\samples\{tfm}" sample
+  - type: command
+    command: cd sample\App
+  - type: command
+    command: dotnet build
+  - type: command
+    command: cd bin\Debug\{tfm}
+  - type: command
+    command: dotnet App.dll
+    assert_output_contains:
+    - Hello, World!
+    - Hello from my Net472CL
+  - type: command
+    command: App.exe
+    assert_output_contains:
+    - Hello, World!
+    - Hello from my Net472CL
+  sort_order: 16
