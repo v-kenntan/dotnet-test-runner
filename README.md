@@ -53,14 +53,8 @@ Each test reports one of these outcomes:
 
 ### Build Steps
 
-**Windows:**
 ```
 build.bat
-```
-
-**Linux/macOS:**
-```
-./build.sh
 ```
 
 Output: `dist/dotnet-test-runner/` folder containing the standalone executable.
@@ -139,7 +133,6 @@ dotnet-test-runner/
 │   │   └── components/     # React components
 │   └── package.json
 ├── build.bat               # Windows build script
-├── build.sh                # Linux/macOS build script
 ├── build.spec              # PyInstaller configuration
 ├── run.bat                 # Dev launcher (Windows)
 ├── run-prod.bat            # Production launcher (Windows)

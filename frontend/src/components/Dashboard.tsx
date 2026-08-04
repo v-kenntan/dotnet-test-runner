@@ -1,23 +1,11 @@
 import { TestRun } from '../api';
+import { formatTime } from '../report';
 
 interface DashboardProps {
   runs: TestRun[];
   onViewRun: (run: TestRun) => void;
   onRetryRun: (run: TestRun) => void;
   isRunning: boolean;
-}
-
-function formatTime(iso: string | null): string {
-  if (!iso) return '-';
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, {
-      year: 'numeric', month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit', second: '2-digit'
-    });
-  } catch {
-    return iso;
-  }
 }
 
 function SummaryBar({ summary }: { summary: string | null }) {

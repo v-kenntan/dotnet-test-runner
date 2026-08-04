@@ -1,5 +1,4 @@
 flask==3.1.0
-flask-cors==5.0.1
 pyyaml==6.0.2
 pyte>=0.8.2
 pywinauto>=0.6.8

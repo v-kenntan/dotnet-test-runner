@@ -10,7 +10,6 @@ import uuid
 import webbrowser
 import threading
 from flask import Flask, request, jsonify, Response, send_from_directory
-from flask_cors import CORS
 import yaml
 from executor import TestExecutor
 
@@ -27,7 +26,6 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 app.json.sort_keys = False
-CORS(app)
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_runner.db")
 if getattr(sys, '_MEIPASS', None):
@@ -76,7 +74,6 @@ def init_db():
             status TEXT DEFAULT 'pending',
             started_at TEXT,
             finished_at TEXT,
-            log_output TEXT,
             FOREIGN KEY (run_id) REFERENCES test_runs(id),
             FOREIGN KEY (test_case_id) REFERENCES test_cases(id)
         );
@@ -293,14 +290,9 @@ def start_execution():
     conn.close()
 
     run_id = str(uuid.uuid4())[:12]
-    open_console = data.get("open_console", True)
     sdk_version = data.get("sdk_version", None)
     sdk_path = data.get("sdk_path", None)
-    # Debug log to file (since exe has no console)
-    import tempfile
-    with open(os.path.join(tempfile.gettempdir(), "test_runner_debug.log"), "a") as dbg:
-        dbg.write(f"[Execute] run_id={run_id}, sdk_version={sdk_version}, sdk_path={sdk_path}\n")
-    executor.start_run(run_id, [dict(t) for t in tests], open_console=open_console, sdk_version=sdk_version, sdk_path=sdk_path)
+    executor.start_run(run_id, [dict(t) for t in tests], sdk_version=sdk_version, sdk_path=sdk_path)
     return jsonify({"run_id": run_id})
 
 
@@ -321,7 +313,6 @@ def stream_execution(run_id):
 
 def _refresh_path():
     """Refresh PATH from the registry so newly installed tools are found."""
-    import os
     machine_path = os.environ.get("PATH", "")
     try:
         import winreg
@@ -337,7 +328,6 @@ def _refresh_path():
 @app.route("/api/environment", methods=["GET"])
 def get_environment():
     """Get current dotnet environment info."""
-    import subprocess
     _refresh_path()
     try:
         result = subprocess.run(
@@ -356,7 +346,6 @@ def get_environment():
 @app.route("/api/sdks", methods=["GET"])
 def list_sdks():
     """List all installed .NET SDKs."""
-    import subprocess
     _refresh_path()
     try:
         result = subprocess.run(
@@ -390,10 +379,7 @@ def pick_folder():
     UI can pin a specific SDK install (e.g. a zip-extracted SDK) for a run.
     """
     def has_dotnet(folder):
-        if not folder:
-            return False
-        exe = "dotnet.exe" if sys.platform == "win32" else "dotnet"
-        return os.path.isfile(os.path.join(folder, exe))
+        return bool(folder) and os.path.isfile(os.path.join(folder, "dotnet.exe"))
 
     try:
         import tkinter as tk
