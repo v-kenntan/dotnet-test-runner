@@ -17,7 +17,6 @@ a = Analysis(
     ],
     hiddenimports=[
         'flask',
-        'flask_cors',
         'yaml',
         'sqlite3',
         'executor',

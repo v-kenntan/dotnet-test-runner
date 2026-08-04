@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, deleteTest, TestRun, fetchRunDetails } from './api'
+import { resultLine } from './report'
 import TestList from './components/TestList'
 import TestRunner from './components/TestRunner'
 import LogViewer from './components/LogViewer'
@@ -93,16 +94,15 @@ export default function App() {
     });
   }, []);
 
-  const handleRun = useCallback(async () => {
-    if (selectedIds.size === 0) return;
+  const runTests = useCallback(async (ids: string[], sdkVersion?: string, sdkPath?: string) => {
     setLogs([]);
     setSummary(null);
     setTestStatuses({});
     setRunStatus('running');
-    setRunnerTests(tests.filter(t => selectedIds.has(t.id)));
+    setRunnerTests(tests.filter(t => ids.includes(t.id)));
     setView('running');
 
-    const { run_id } = await startExecution(Array.from(selectedIds), selectedSdk);
+    const { run_id } = await startExecution(ids, sdkVersion, sdkPath);
     setRunId(run_id);
 
     streamExecution(run_id, (event: StreamEvent) => {
@@ -117,23 +117,23 @@ export default function App() {
         case 'step_output':
           setLogs(prev => [...prev, event.line as string]);
           break;
-        case 'step_end':
-          // Only show test-level pass/fail, not per-step status
-          break;
         case 'test_end':
           setTestStatuses(prev => ({ ...prev, [event.test_case_id as string]: event.status as string }));
-          setLogs(prev => [...prev, `  ${event.status === 'passed' ? '✅ PASSED' : event.status === 'passed_with_warnings' ? '⚠️ PASSED (warnings)' : '❌ FAILED'}`]);
+          setLogs(prev => [...prev, resultLine(event.status as string)]);
           break;
         case 'run_end':
           setRunStatus('completed');
           setSummary(event.summary as { passed: number; failed: number; skipped: number });
           setLogs(prev => [...prev, `\n✅ Run complete: ${JSON.stringify(event.summary)}`]);
           break;
-        case 'heartbeat':
-          break;
       }
     });
-  }, [selectedIds, selectedSdk, tests]);
+  }, [tests]);
+
+  const handleRun = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    await runTests(Array.from(selectedIds), selectedSdk);
+  }, [selectedIds, selectedSdk, runTests]);
 
   const handleCancel = useCallback(async () => {
     if (runId) {
@@ -177,46 +177,8 @@ export default function App() {
     }
 
     const sdkVersion = run.sdk_version || selectedSdk;
-    const sdkPathForRun = run.sdk_path || undefined;
-
-    setLogs([]);
-    setSummary(null);
-    setTestStatuses({});
-    setRunStatus('running');
-    setRunnerTests(tests.filter(t => availableIds.includes(t.id)));
-    setView('running');
-
-    const { run_id } = await startExecution(availableIds, sdkVersion, sdkPathForRun);
-    setRunId(run_id);
-
-    streamExecution(run_id, (event: StreamEvent) => {
-      switch (event.type) {
-        case 'run_start':
-          setLogs(prev => [...prev, `▶ Run started (${event.total_tests} tests)`]);
-          break;
-        case 'test_start':
-          setLogs(prev => [...prev, `\n━━━ ${event.title} ━━━`]);
-          setTestStatuses(prev => ({ ...prev, [event.test_case_id as string]: 'running' }));
-          break;
-        case 'step_output':
-          setLogs(prev => [...prev, event.line as string]);
-          break;
-        case 'step_end':
-          break;
-        case 'test_end':
-          setTestStatuses(prev => ({ ...prev, [event.test_case_id as string]: event.status as string }));
-          setLogs(prev => [...prev, `  ${event.status === 'passed' ? '✅ PASSED' : event.status === 'passed_with_warnings' ? '⚠️ PASSED (warnings)' : '❌ FAILED'}`]);
-          break;
-        case 'run_end':
-          setRunStatus('completed');
-          setSummary(event.summary as { passed: number; failed: number; skipped: number });
-          setLogs(prev => [...prev, `\n✅ Run complete: ${JSON.stringify(event.summary)}`]);
-          break;
-        case 'heartbeat':
-          break;
-      }
-    });
-  }, [runStatus, selectedSdk, tests]);
+    await runTests(availableIds, sdkVersion, run.sdk_path || undefined);
+  }, [runStatus, selectedSdk, tests, runTests]);
 
   const handleRefreshTests = useCallback(async () => {
     const data = await fetchTests();

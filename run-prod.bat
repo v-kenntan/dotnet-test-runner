@@ -2,14 +2,10 @@
 title .NET SDK Test Runner (Production)
 echo Building and starting in production mode...
 
-:: Build frontend
+:: Build frontend (vite outputs straight to backend/static)
 cd frontend
 call npm run build
 cd ..
-
-:: Copy build to backend static
-if exist "backend\static" rmdir /s /q "backend\static"
-xcopy /s /e /q frontend\dist backend\static\
 
 :: Start backend (serves both API and static frontend)
 echo.

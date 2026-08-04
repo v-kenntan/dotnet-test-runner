@@ -12,7 +12,7 @@ export interface TestCase {
 }
 
 export interface Step {
-  type: 'command' | 'write_file' | 'assert_output';
+  type: 'command' | 'write_file';
   command?: string;
   path?: string;
   content?: string;

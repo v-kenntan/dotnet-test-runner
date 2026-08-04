@@ -13,7 +13,7 @@ import urllib.request
 import webbrowser
 from datetime import datetime
 from queue import Queue, Empty
-from typing import Dict, List, Any, Generator
+from typing import Dict, List, Generator
 
 
 def _render_terminal_output(text: str) -> str:
@@ -111,9 +111,9 @@ class TestExecutor:
         self._runs: Dict[str, dict] = {}
         self._event_queues: Dict[str, List[Queue]] = {}
         self._cancel_flags: Dict[str, threading.Event] = {}
-        self._console_procs: Dict[str, Any] = {}  # run_id -> console_dir path
+        self._console_procs: Dict[str, str] = {}  # run_id -> console_dir path
 
-    def start_run(self, run_id: str, tests: List[dict], open_console: bool = True, sdk_version: str = None, sdk_path: str = None):
+    def start_run(self, run_id: str, tests: List[dict], sdk_version: str = None, sdk_path: str = None):
         """Start executing tests in a background thread.
 
         sdk_path, when provided, is the install root (folder containing dotnet.exe)
@@ -127,9 +127,7 @@ class TestExecutor:
         self._runs[run_id] = {"status": "running", "tests": tests, "sdk_version": sdk_version, "sdk_path": sdk_path}
         self._event_queues[run_id] = []
 
-        # Open a separate console window if requested
-        if open_console:
-            self._open_console(run_id)
+        self._open_console(run_id)
 
         conn = get_db()
         conn.execute(
@@ -156,8 +154,7 @@ class TestExecutor:
         return run.get("sdk_path") or None
 
     def _dotnet_exe(self, root: str) -> str:
-        name = "dotnet.exe" if sys.platform == "win32" else "dotnet"
-        return os.path.join(root, name)
+        return os.path.join(root, "dotnet.exe")
 
     def _valid_dotnet_root(self, root: str) -> bool:
         return bool(root) and os.path.isfile(self._dotnet_exe(root))
@@ -173,10 +170,9 @@ class TestExecutor:
         root = self._dotnet_root(run_id)
         if not root:
             return env
-        sep = ";" if sys.platform == "win32" else ":"
         env["DOTNET_ROOT"] = root
         env["DOTNET_MULTILEVEL_LOOKUP"] = "0"
-        env["PATH"] = root + sep + env.get("PATH", "")
+        env["PATH"] = root + ";" + env.get("PATH", "")
         return env
 
     def _open_console(self, run_id: str):
@@ -194,98 +190,50 @@ class TestExecutor:
             with open(cmd_file, "w", encoding="utf-8") as f:
                 f.write("")
 
-            if sys.platform == "win32":
-                # Create a batch script that polls for commands
-                script_path = os.path.join(console_dir, "runner.bat")
-                exec_file = os.path.join(console_dir, "exec.bat")
-                with open(script_path, "w", encoding="utf-8") as f:
-                    f.write("@echo off\n")
-                    f.write("%SystemRoot%\\System32\\chcp.com 65001 >nul\n")  # full path; PATH may lack System32 in the spawned console
-                    f.write(f"title .NET Test Runner - Run {run_id}\n")
-                    f.write("echo ========================================\n")
-                    f.write("echo   .NET SDK Test Runner - Live Console\n")
-                    f.write("echo ========================================\n")
-                    f.write("echo.\n")
-                    f.write(":loop\n")
-                    f.write(f'if exist "{done_file}" goto end\n')
-                    # Check if commands file has content (size > 0)
-                    f.write(f'for %%A in ("{cmd_file}") do if %%~zA==0 goto wait\n')
-                    # Copy commands to exec file and clear the queue
-                    f.write(f'copy /y "{cmd_file}" "{exec_file}" >nul 2>&1\n')
-                    f.write(f'type nul > "{cmd_file}"\n')
-                    # Execute the commands
-                    f.write(f'call "{exec_file}"\n')
-                    f.write(":wait\n")
-                    f.write("timeout /t 1 /nobreak >nul 2>&1\n")
-                    f.write("goto loop\n")
-                    f.write(":end\n")
-                    f.write("echo.\n")
-                    f.write("echo ========================================\n")
-                    f.write("echo   Run complete. You may close this window.\n")
-                    f.write("echo ========================================\n")
-                    f.write("pause\n")
+            # Create a batch script that polls for commands
+            script_path = os.path.join(console_dir, "runner.bat")
+            exec_file = os.path.join(console_dir, "exec.bat")
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write("@echo off\n")
+                f.write("%SystemRoot%\\System32\\chcp.com 65001 >nul\n")  # full path; PATH may lack System32 in the spawned console
+                f.write(f"title .NET Test Runner - Run {run_id}\n")
+                f.write("echo ========================================\n")
+                f.write("echo   .NET SDK Test Runner - Live Console\n")
+                f.write("echo ========================================\n")
+                f.write("echo.\n")
+                f.write(":loop\n")
+                f.write(f'if exist "{done_file}" goto end\n')
+                # Check if commands file has content (size > 0)
+                f.write(f'for %%A in ("{cmd_file}") do if %%~zA==0 goto wait\n')
+                # Copy commands to exec file and clear the queue
+                f.write(f'copy /y "{cmd_file}" "{exec_file}" >nul 2>&1\n')
+                f.write(f'type nul > "{cmd_file}"\n')
+                # Execute the commands
+                f.write(f'call "{exec_file}"\n')
+                f.write(":wait\n")
+                f.write("timeout /t 1 /nobreak >nul 2>&1\n")
+                f.write("goto loop\n")
+                f.write(":end\n")
+                f.write("echo.\n")
+                f.write("echo ========================================\n")
+                f.write("echo   Run complete. You may close this window.\n")
+                f.write("echo ========================================\n")
+                f.write("pause\n")
 
-                # Launch the batch script in a new console window
-                subprocess.Popen(
-                    ["cmd.exe", "/c", script_path],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
-            else:
-                import shutil
-                # Create a bash script that polls for commands
-                script_path = os.path.join(console_dir, "runner.sh")
-                with open(script_path, "w", encoding="utf-8") as f:
-                    f.write("#!/bin/bash\n")
-                    f.write("echo '========================================'\n")
-                    f.write("echo '  .NET SDK Test Runner - Live Console'\n")
-                    f.write("echo '========================================'\n")
-                    f.write("echo\n")
-                    f.write(f'CMD_FILE="{cmd_file}"\n')
-                    f.write(f'DONE_FILE="{done_file}"\n')
-                    f.write("while true; do\n")
-                    f.write('  if [ -s "$CMD_FILE" ]; then\n')
-                    f.write('    while IFS= read -r line; do\n')
-                    f.write('      echo\n')
-                    f.write('      eval "$line"\n')
-                    f.write('    done < "$CMD_FILE"\n')
-                    f.write('    > "$CMD_FILE"\n')
-                    f.write("  fi\n")
-                    f.write('  if [ -f "$DONE_FILE" ]; then break; fi\n')
-                    f.write("  sleep 0.5\n")
-                    f.write("done\n")
-                    f.write("echo\n")
-                    f.write("echo '========================================'\n")
-                    f.write("echo '  Run complete. Press Enter to close.'\n")
-                    f.write("echo '========================================'\n")
-                    f.write("read\n")
-                os.chmod(script_path, 0o755)
-
-                terminals = [
-                    ["gnome-terminal", "--title", f"Test Runner - {run_id}", "--"],
-                    ["xfce4-terminal", "--title", f"Test Runner - {run_id}", "-e"],
-                    ["konsole", "--title", f"Test Runner - {run_id}", "-e"],
-                    ["xterm", "-title", f"Test Runner - {run_id}", "-e"],
-                ]
-                for term in terminals:
-                    if shutil.which(term[0]):
-                        try:
-                            subprocess.Popen(
-                                term + [script_path],
-                                start_new_session=True,
-                            )
-                        except Exception:
-                            continue
-                        break
-
+            # Launch the batch script in a new console window
+            subprocess.Popen(
+                ["cmd.exe", "/c", script_path],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
             # Store the console directory path for communication
             self._console_procs[run_id] = console_dir
         except Exception:
-            self._console_procs[run_id] = None
+            self._console_procs.pop(run_id, None)
 
     def _close_console(self, run_id: str):
         """Signal the console that the run is complete."""
         console_dir = self._console_procs.pop(run_id, None)
-        if console_dir and isinstance(console_dir, str):
+        if console_dir:
             try:
                 done_file = os.path.join(console_dir, "done.txt")
                 with open(done_file, "w") as f:
@@ -410,18 +358,16 @@ class TestExecutor:
             })
 
             # Send test header to console with spacing
-            blank = "echo." if sys.platform == "win32" else "echo"
             title = test["title"]
-            if sys.platform == "win32":
-                # Title is arbitrary text echoed into a cmd batch; escape the cmd
-                # metacharacters that would otherwise split the line (e.g.
-                # "& .NET Standard"). Caret first so we don't double-escape the
-                # carets we add.
-                for ch in "^&<>|()":
-                    title = title.replace(ch, "^" + ch)
-            self._queue_console_cmd(run_id, blank)
+            # Title is arbitrary text echoed into a cmd batch; escape the cmd
+            # metacharacters that would otherwise split the line (e.g.
+            # "& .NET Standard"). Caret first so we don't double-escape the
+            # carets we add.
+            for ch in "^&<>|()":
+                title = title.replace(ch, "^" + ch)
+            self._queue_console_cmd(run_id, "echo.")
             self._queue_console_cmd(run_id, f"echo ===== {title} =====")
-            self._queue_console_cmd(run_id, blank)
+            self._queue_console_cmd(run_id, "echo.")
 
             # Resolve this test's SDK context: a valid per-test folder overrides
             # the run-level one for this test only; otherwise the run-level applies.
@@ -563,9 +509,8 @@ class TestExecutor:
                         "line": f"$ {cmd}\n  → {current_dir}",
                     })
                     # Send cd to console, echoing the prompt at the dir BEFORE cd so it matches a manual run
-                    cd_cmd = f"cd /d {current_dir}" if sys.platform == "win32" else f"cd {current_dir}"
-                    self._queue_console_cmd(run_id, f"echo {prev_dir}^> {cmd}" if sys.platform == "win32" else f"echo '{prev_dir}$ {cmd}'")
-                    self._queue_console_cmd(run_id, cd_cmd)
+                    self._queue_console_cmd(run_id, f"echo {prev_dir}^> {cmd}")
+                    self._queue_console_cmd(run_id, f"cd /d {current_dir}")
                     continue
 
                 # Long-running server step (e.g. `dotnet run`): stream output, wait
@@ -702,12 +647,10 @@ class TestExecutor:
 
                 start_time = time.time()
                 wrote_via_notepad = False
-
-                if sys.platform == "win32":
-                    try:
-                        wrote_via_notepad = self._write_file_via_notepad(filepath, content)
-                    except Exception:
-                        wrote_via_notepad = False
+                try:
+                    wrote_via_notepad = self._write_file_via_notepad(filepath, content)
+                except Exception:
+                    wrote_via_notepad = False
 
                 if not wrote_via_notepad:
                     # Fallback to direct write
@@ -780,7 +723,7 @@ class TestExecutor:
     def _queue_console_cmd(self, run_id: str, command: str):
         """Write a command to the console's command queue file."""
         console_dir = self._console_procs.get(run_id)
-        if not console_dir or not isinstance(console_dir, str):
+        if not console_dir:
             return
         try:
             cmd_file = os.path.join(console_dir, "commands.txt")
@@ -799,7 +742,7 @@ class TestExecutor:
         """
         console_dir = self._console_procs.get(run_id)
 
-        if not console_dir or not isinstance(console_dir, str):
+        if not console_dir:
             # No console available — run directly (fallback)
             return self._run_direct(cmd, cwd, timeout, cancel_flag, run_id)
 
@@ -820,37 +763,25 @@ class TestExecutor:
         cmd_file = os.path.join(console_dir, "commands.txt")
         root = self._dotnet_root(run_id)
         try:
-            if sys.platform == "win32":
-                # Write a dedicated wrapper batch that captures exit code reliably
-                wrapper_file = os.path.join(console_dir, "runcmd.bat")
-                with open(wrapper_file, "w", encoding="utf-8") as wf:
-                    wf.write("@echo off\n")
-                    wf.write("set MSBUILDTERMINALLOGGER=on\n")
-                    if root:
-                        # Point dotnet at the pinned SDK install for this run.
-                        wf.write(f'set "DOTNET_ROOT={root}"\n')
-                        wf.write("set DOTNET_MULTILEVEL_LOOKUP=0\n")
-                        wf.write(f'set "PATH={root};%PATH%"\n')
-                    wf.write(f"cd /d {cwd}\n")
-                    wf.write(f"echo {cwd}^> {cmd}\n")
-                    # Use && and || to reliably capture success/failure
-                    wf.write(f'{cmd} > "{stdout_file}" 2>&1 && (echo 0 > "{exitcode_file}") || (echo 1 > "{exitcode_file}")\n')
-                    wf.write(f'type "{stdout_file}"\n')
-                    wf.write("echo.\n")
-                # Tell the console to call the wrapper
-                with open(cmd_file, "a", encoding="utf-8") as f:
-                    f.write(f'call "{wrapper_file}"\n')
-            else:
-                with open(cmd_file, "a", encoding="utf-8") as f:
-                    f.write(f"cd {cwd}\n")
-                    f.write(f"echo '{cwd}$ {cmd}'\n")
-                    f.write("export MSBUILDTERMINALLOGGER=on\n")
-                    if root:
-                        f.write(f'export DOTNET_ROOT="{root}"\n')
-                        f.write("export DOTNET_MULTILEVEL_LOOKUP=0\n")
-                        f.write(f'export PATH="{root}:$PATH"\n')
-                    f.write(f'{cmd} 2>&1 | tee "{stdout_file}"; echo $? > "{exitcode_file}"\n')
-                    f.write("echo\n")
+            # Write a dedicated wrapper batch that captures exit code reliably
+            wrapper_file = os.path.join(console_dir, "runcmd.bat")
+            with open(wrapper_file, "w", encoding="utf-8") as wf:
+                wf.write("@echo off\n")
+                wf.write("set MSBUILDTERMINALLOGGER=on\n")
+                if root:
+                    # Point dotnet at the pinned SDK install for this run.
+                    wf.write(f'set "DOTNET_ROOT={root}"\n')
+                    wf.write("set DOTNET_MULTILEVEL_LOOKUP=0\n")
+                    wf.write(f'set "PATH={root};%PATH%"\n')
+                wf.write(f"cd /d {cwd}\n")
+                wf.write(f"echo {cwd}^> {cmd}\n")
+                # Use && and || to reliably capture success/failure
+                wf.write(f'{cmd} > "{stdout_file}" 2>&1 && (echo 0 > "{exitcode_file}") || (echo 1 > "{exitcode_file}")\n')
+                wf.write(f'type "{stdout_file}"\n')
+                wf.write("echo.\n")
+            # Tell the console to call the wrapper
+            with open(cmd_file, "a", encoding="utf-8") as f:
+                f.write(f'call "{wrapper_file}"\n')
         except Exception:
             return self._run_direct(cmd, cwd, timeout, cancel_flag, run_id)
 
@@ -904,8 +835,6 @@ class TestExecutor:
         Python owns the process (clean PID kill). Each captured line is written to a
         log file that the popup console tails live via a small PowerShell script, so
         the console streams the same output as the panel in real time.
-        # live tail is Windows-only; other platforms fall back to a single
-        # block dump after the step. Add a `tail -f`+sentinel loop if posix needs live.
         """
         ready_patterns = step.get("ready_pattern") or []
         if isinstance(ready_patterns, str):
@@ -920,8 +849,7 @@ class TestExecutor:
         hold_seconds = step.get("hold_seconds", 10)
 
         console_dir = self._console_procs.get(run_id)
-        console_dir = console_dir if isinstance(console_dir, str) else None
-        live = bool(console_dir) and sys.platform == "win32"
+        live = bool(console_dir)
 
         lines = []
         ready = threading.Event()
@@ -976,9 +904,6 @@ class TestExecutor:
                     open(done_flag, "w").close()
                 except OSError:
                     pass
-            elif console_dir:
-                # No live tail (posix): dump the whole block after the step.
-                self._console_show_output(run_id, f"{cwd}> {cmd}\n" + "".join(lines))
             return (_render_terminal_output("".join(lines)), exit_code)
 
         env = self._sdk_env(run_id)
@@ -1109,27 +1034,6 @@ class TestExecutor:
             pass
         return path
 
-    def _console_show_output(self, run_id: str, text: str):
-        """Dump arbitrary text into the popup console via a temp file + `type`.
-        # `type`/`cat` a file instead of `echo` so server output with
-        # special chars (: / | & %) is shown verbatim, no shell-escaping needed.
-        """
-        console_dir = self._console_procs.get(run_id)
-        if not console_dir or not isinstance(console_dir, str):
-            return
-        try:
-            out_file = os.path.join(console_dir, f"srvout_{uuid.uuid4().hex[:8]}.txt")
-            with open(out_file, "w", encoding="utf-8") as f:
-                f.write(text)
-            if sys.platform == "win32":
-                self._queue_console_cmd(run_id, f'type "{out_file}"')
-                self._queue_console_cmd(run_id, "echo.")
-            else:
-                self._queue_console_cmd(run_id, f'cat "{out_file}"')
-                self._queue_console_cmd(run_id, "echo")
-        except Exception:
-            pass
-
     def _verify_site(self, url: str, contains) -> tuple:
         """One HTTP GET (a couple of tries). Returns (ok, status, body, err)."""
         # dev HTTPS cert is self-signed -> skip TLS verification.
@@ -1158,15 +1062,12 @@ class TestExecutor:
     def _terminate_proc(self, proc: subprocess.Popen):
         """Kill the process and its children."""
         try:
-            if sys.platform == "win32":
-                # taskkill /T reaps the dotnet child that shell=True spawns;
-                # proc.terminate() alone leaves the server listening.
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-            else:
-                proc.terminate()
+            # taskkill /T reaps the dotnet child that shell=True spawns;
+            # proc.terminate() alone leaves the server listening.
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
             proc.wait(timeout=5)
         except Exception:
             try:
