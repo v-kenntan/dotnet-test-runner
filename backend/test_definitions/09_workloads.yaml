@@ -82,7 +82,7 @@ tests:
   category: Workloads
   title: Workload Scenario 1
   description: Inspect workload info, installed workloads, and searchable workload
-    manifests
+    manifests, then verify the workload installer-type marker (MSI) is a 0 KB file
   machine_mutating: true
   steps:
   - type: command
@@ -91,6 +91,27 @@ tests:
     command: dotnet workload list
   - type: command
     command: dotnet workload search
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$r = $env:DOTNET_ROOT;
+      if (-not $r) { $r = 'C:\Program Files\dotnet' }; $m = Get-ChildItem (Join-Path
+      $r 'metadata\workloads') -Recurse -Filter msi -ErrorAction SilentlyContinue |
+      Where-Object { $_.Directory.Name -eq 'installertype' }; if (-not $m) { Write-Error
+      ('No installertype\msi marker file found under ' + $r); exit 1 }; $bad = 0; foreach
+      ($f in $m) { Write-Host ($f.FullName + ' = ' + $f.Length + ' bytes'); if ($f.Length
+      -ne 0) { $bad = 1 } }; if ($bad) { Write-Error 'One or more MSI marker files
+      are not 0 KB'; exit 1 }; Write-Host 'PASS: MSI installer-type marker(s) are 0
+      KB'; exit 0"
+    assert_output_contains:
+    - 'PASS: MSI installer-type marker'
+  - type: screenshot
+    label: installertype
+    delay: 5
+    folder_ps: >-
+      $r = $env:DOTNET_ROOT; if (-not $r) { $r = 'C:\Program Files\dotnet' };
+      (Get-ChildItem (Join-Path $r 'metadata\workloads') -Recurse -Filter msi
+      -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq
+      'installertype' } | Select-Object -First 1).Directory.FullName
   sort_order: 22
 - id: workloads-scenario-2-wasm-android
   category: Workloads

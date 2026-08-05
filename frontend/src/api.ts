@@ -107,6 +107,19 @@ export async function fetchStepResults(runId: string, resultId: string): Promise
   return res.json();
 }
 
+export interface RunScreenshot {
+  name: string;
+  url: string;
+  modified: number;
+  size: number;
+}
+
+export async function fetchScreenshots(runId: string): Promise<RunScreenshot[]> {
+  const res = await fetch(`${API_BASE}/runs/${runId}/screenshots`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function fetchEnvironment(): Promise<{ output: string; exit_code: number }> {
   const res = await fetch(`${API_BASE}/environment`);
   return res.json();

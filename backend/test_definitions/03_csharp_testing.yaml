@@ -10,6 +10,7 @@ tests:
     command: cd x
   - type: write_file
     path: UnitTest1.cs
+    screenshot: true
     content: |
       namespace Myxunit;
       
@@ -52,6 +53,7 @@ tests:
     command: cd n
   - type: write_file
     path: UnitTest1.cs
+    screenshot: true
     content: |
       namespace Mynunit
       {
@@ -101,6 +103,7 @@ tests:
     command: cd m
   - type: write_file
     path: Test1.cs
+    screenshot: true
     content: |
       namespace Mymstest;
       

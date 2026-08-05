@@ -65,6 +65,7 @@ tests:
   - type: command
     command: cd ..
   - type: write_file
+    screenshot: true
     path: a/Program.cs
     content: |
       using System;
@@ -83,6 +84,7 @@ tests:
           }
       }
   - type: write_file
+    screenshot: true
     path: b/Class1.cs
     content: |
       using System;
@@ -97,6 +99,7 @@ tests:
           }
       }
   - type: write_file
+    screenshot: true
     path: c/Class1.cs
     content: |
       using System;

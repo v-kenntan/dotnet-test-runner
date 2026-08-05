@@ -27,6 +27,24 @@ Precedence per test:
 
 If a per-test folder is set but invalid (missing `dotnet`), the run logs a warning and falls back to the `PATH` SDK. This lets, say, the "zip install" workload tests target a zip SDK while the rest of the run uses the default.
 
+## Screenshots (evidence capture)
+
+A test can capture a screenshot as evidence using a `screenshot` step (Windows only). It opens a folder in Explorer and saves a PNG of the primary screen:
+
+```yaml
+- type: screenshot
+  label: installertype          # used in the filename and log
+  delay: 5                      # seconds to wait before capturing (optional)
+  folder_ps: >-                 # PowerShell that outputs the folder to open...
+    (Get-ChildItem 'C:\Program Files\dotnet\metadata\workloads' -Recurse
+    -Filter msi | Where-Object { $_.Directory.Name -eq 'installertype' } |
+    Select-Object -First 1).Directory.FullName
+  # ...or a literal path instead of folder_ps:
+  # folder: 'C:\Program Files\dotnet\metadata\workloads'
+```
+
+Screenshots are saved under `screenshots/<run_id>/` next to the app's database and can be browsed in the **Screenshots** tab of a run's detail view. **Workload Scenario 1** uses this to capture the `installertype` folder (per issue #47).
+
 ## Usage
 
 1. **Select tests** from the left panel (grouped by category)

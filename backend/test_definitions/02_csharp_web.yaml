@@ -21,6 +21,7 @@ tests:
     - Application started
     verify_url: https://localhost:7101
     verify_contains: Hello World
+    screenshot: true
     timeout: 300
   - type: command
     command: cd ..
@@ -37,6 +38,7 @@ tests:
     - Now listening on
     - Application started
     verify_url: https://localhost:7102
+    screenshot: true
     timeout: 300
   - type: command
     command: cd ..
@@ -53,5 +55,6 @@ tests:
     - Now listening on
     - Application started
     verify_url: https://localhost:7103/weatherforecast
+    screenshot: true
     timeout: 300
   sort_order: 4

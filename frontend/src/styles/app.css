@@ -891,6 +891,47 @@ body {
   font-weight: 600;
 }
 
+/* Screenshots tab */
+.screenshots-tab {
+  padding: 0.5rem 0;
+}
+
+.screenshots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.screenshot-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--surface-2);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+  text-decoration: none;
+  color: var(--text-muted);
+  transition: border-color 0.15s;
+}
+
+.screenshot-card:hover {
+  border-color: var(--accent, #4caf50);
+}
+
+.screenshot-card img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  background: #000;
+  display: block;
+}
+
+.screenshot-name {
+  padding: 0.4rem 0.5rem;
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
 /* Run Detail Logs */
 .run-detail-logs-container {
   display: flex;

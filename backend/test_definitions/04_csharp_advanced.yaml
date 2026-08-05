@@ -9,6 +9,7 @@ tests:
   - type: command
     command: cd f2
   - type: write_file
+    screenshot: true
     path: f2.csproj
     content: |
       <Project Sdk="Microsoft.NET.Sdk">
@@ -21,6 +22,7 @@ tests:
         </PropertyGroup>
       </Project>
   - type: write_file
+    screenshot: true
     path: Program.cs
     content: |
       using System;
@@ -46,6 +48,7 @@ tests:
   - type: command
     command: dotnet run
     run_timeout: 10
+    screenshot: true
   - type: command
     command: cd ..
   - type: command
@@ -57,4 +60,5 @@ tests:
   - type: command
     command: dotnet run
     run_timeout: 10
+    screenshot: true
   sort_order: 9
