@@ -26,7 +26,7 @@ tests:
     timeout: 300
   - type: command
     command: dotnet workload list
-  sort_order: 18
+  sort_order: 19
 - id: workloads-maui-zip-install
   category: Workloads
   title: MAUI Workload (zip install)
@@ -54,7 +54,7 @@ tests:
     timeout: 300
   - type: command
     command: dotnet workload list
-  sort_order: 19
+  sort_order: 20
 - id: workloads-wasm-tools-zip-install
   category: Workloads
   title: Wasm-tools Workload (zip install)
@@ -77,7 +77,7 @@ tests:
     timeout: 300
   - type: command
     command: dotnet workload list
-  sort_order: 20
+  sort_order: 21
 - id: workloads-scenario-1-search
   category: Workloads
   title: Workload Scenario 1
@@ -91,7 +91,7 @@ tests:
     command: dotnet workload list
   - type: command
     command: dotnet workload search
-  sort_order: 21
+  sort_order: 22
 - id: workloads-scenario-2-wasm-android
   category: Workloads
   title: 'Workload Scenario 2: wasm-tools + android'
@@ -129,4 +129,4 @@ tests:
     timeout: 300
   - type: command
     command: dotnet workload list
-  sort_order: 22
+  sort_order: 23

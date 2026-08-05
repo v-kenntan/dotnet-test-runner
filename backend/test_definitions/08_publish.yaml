@@ -14,7 +14,7 @@ tests:
     command: dotnet run
   - type: command
     command: dotnet publish -f {tfm}
-  sort_order: 16
+  sort_order: 17
 - id: publish-16-self-contained
   category: Publish
   title: 16. Self-contained publish
@@ -37,4 +37,4 @@ tests:
     command: dotnet f4.dll
   - type: command
     command: f4.exe
-  sort_order: 17
+  sort_order: 18

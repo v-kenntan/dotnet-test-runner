@@ -166,4 +166,4 @@ tests:
     command: dotnet build
   - type: command
     command: dotnet run
-  sort_order: 29
+  sort_order: 30
