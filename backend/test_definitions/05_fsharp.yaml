@@ -31,11 +31,13 @@ tests:
   - type: command
     command: cd ..
   - type: write_file
+    screenshot: true
     path: a/Program.fs
     content: |
       printfn "Hello from F#"
       lib1.Say1.hello "Kevin"
   - type: write_file
+    screenshot: true
     path: b/Library.fs
     content: |
       namespace lib1
@@ -43,6 +45,7 @@ tests:
       module Say1 =
           let hello name = Say2.hello name
   - type: write_file
+    screenshot: true
     path: c/Library.fs
     content: |
       namespace lib2
@@ -77,6 +80,7 @@ tests:
     - Application started
     verify_url: https://localhost:7201
     verify_contains: Hello World
+    screenshot: true
     timeout: 300
   - type: command
     command: cd ..
@@ -93,6 +97,7 @@ tests:
     - Now listening on
     - Application started
     verify_url: https://localhost:7202
+    screenshot: true
     timeout: 300
   - type: command
     command: cd ..
@@ -109,6 +114,7 @@ tests:
     - Now listening on
     - Application started
     verify_url: https://localhost:7203/weatherforecast
+    screenshot: true
     timeout: 300
   sort_order: 11
 - id: fs-10-xunit-nunit-mstest

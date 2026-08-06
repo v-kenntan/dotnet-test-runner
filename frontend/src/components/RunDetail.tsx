@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { TestRun } from '../api';
+import { TestRun, fetchScreenshots, RunScreenshot } from '../api';
 import {
   Summary, statusIcon, formatTime, generateMarkdown, downloadMarkdown, reconstructLogs,
 } from '../report';
@@ -24,7 +24,7 @@ interface RunDetailProps {
   onBack: () => void;
 }
 
-type Tab = 'results' | 'logs';
+type Tab = 'results' | 'logs' | 'screenshots';
 
 export default function RunDetail({ run, results, tests, onBack }: RunDetailProps) {
   const summary: Summary | null = run.summary ? JSON.parse(run.summary) : null;
@@ -32,6 +32,8 @@ export default function RunDetail({ run, results, tests, onBack }: RunDetailProp
   const [logs, setLogs] = useState<string[] | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
   const logViewerRef = useRef<LogViewerHandle>(null);
+  const [screenshots, setScreenshots] = useState<RunScreenshot[] | null>(null);
+  const [screenshotsLoading, setScreenshotsLoading] = useState(false);
 
   const loadLogs = useCallback(async (): Promise<string[]> => {
     if (logs !== null) return logs;
@@ -52,9 +54,22 @@ export default function RunDetail({ run, results, tests, onBack }: RunDetailProp
     setTimeout(() => logViewerRef.current?.scrollToTest(title), 100);
   }, [loadLogs]);
 
+  const loadScreenshots = useCallback(async () => {
+    setScreenshotsLoading(true);
+    try {
+      setScreenshots(await fetchScreenshots(run.id));
+    } finally {
+      setScreenshotsLoading(false);
+    }
+  }, [run.id]);
+
   const handleTabChange = (newTab: Tab) => {
     setTab(newTab);
-    if (newTab === 'logs') loadLogs();
+    if (newTab === 'logs') {
+      loadLogs();
+    } else if (newTab === 'screenshots') {
+      loadScreenshots();
+    }
   };
 
   const handleExport = useCallback(async () => {
@@ -90,6 +105,9 @@ export default function RunDetail({ run, results, tests, onBack }: RunDetailProp
         </button>
         <button className={tab === 'logs' ? 'active' : ''} onClick={() => handleTabChange('logs')}>
           Full Log
+        </button>
+        <button className={tab === 'screenshots' ? 'active' : ''} onClick={() => handleTabChange('screenshots')}>
+          Screenshots
         </button>
       </div>
 
@@ -159,6 +177,32 @@ export default function RunDetail({ run, results, tests, onBack }: RunDetailProp
             )}
           </div>
         </>
+      )}
+
+      {tab === 'screenshots' && (
+        <div className="screenshots-tab">
+          {screenshotsLoading ? (
+            <p className="loading-text">Loading screenshots...</p>
+          ) : !screenshots || screenshots.length === 0 ? (
+            <p className="loading-text">No screenshots were captured for this run.</p>
+          ) : (
+            <div className="screenshots-grid">
+              {screenshots.map(shot => (
+                <a
+                  key={shot.name}
+                  className="screenshot-card"
+                  href={shot.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`${shot.name} — click to open full size`}
+                >
+                  <img src={shot.url} alt={shot.name} loading="lazy" />
+                  <span className="screenshot-name">{shot.name}</span>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

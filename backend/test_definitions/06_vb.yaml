@@ -87,6 +87,7 @@ tests:
   - type: command
     command: dotnet run
     run_timeout: 10
+    screenshot: true
   - type: command
     command: cd ..
   - type: command
@@ -98,4 +99,5 @@ tests:
   - type: command
     command: dotnet run
     run_timeout: 10
+    screenshot: true
   sort_order: 15

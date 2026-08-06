@@ -33,6 +33,10 @@ if getattr(sys, '_MEIPASS', None):
     DB_PATH = os.path.join(os.path.dirname(sys.executable), "test_runner.db")
 DEFINITIONS_DIR = os.path.join(BASE_DIR, "test_definitions")
 
+# Screenshots captured during runs live next to the DB (persistent), one folder
+# per run: <db_dir>/screenshots/<run_id>/*.png
+SCREENSHOTS_DIR = os.path.join(os.path.dirname(DB_PATH), "screenshots")
+
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -136,11 +140,13 @@ def load_builtin_definitions():
         for test in data["tests"]:
             test_id = test["id"]
             if test_id in existing:
-                # Already seeded: only refresh ordering, so inserting a test in
-                # the middle of the list reorders existing DBs too.
+                # Already seeded: refresh ordering and step definitions from the
+                # YAML so changes to built-in tests (e.g. new screenshot steps)
+                # reach existing DBs too. Only built-ins are yaml-owned; user
+                # created tests (is_builtin = 0) are left untouched.
                 conn.execute(
-                    "UPDATE test_cases SET sort_order = ? WHERE id = ? AND is_builtin = 1",
-                    (test.get("sort_order", 999), test_id),
+                    "UPDATE test_cases SET sort_order = ?, steps = ? WHERE id = ? AND is_builtin = 1",
+                    (test.get("sort_order", 999), json.dumps(test["steps"]), test_id),
                 )
                 continue
             conn.execute(
@@ -278,6 +284,38 @@ def get_step_results(run_id, result_id):
     ).fetchall()
     conn.close()
     return jsonify([dict(s) for s in steps])
+
+
+@app.route("/api/runs/<run_id>/screenshots", methods=["GET"])
+def list_screenshots(run_id):
+    """List screenshots captured during a run (PNG files in the run's folder)."""
+    run_dir = os.path.join(SCREENSHOTS_DIR, run_id)
+    shots = []
+    if os.path.isdir(run_dir):
+        for name in os.listdir(run_dir):
+            if not name.lower().endswith(".png"):
+                continue
+            fp = os.path.join(run_dir, name)
+            if not os.path.isfile(fp):
+                continue
+            shots.append({
+                "name": name,
+                "url": f"/api/runs/{run_id}/screenshots/{name}",
+                "modified": os.path.getmtime(fp),
+                "size": os.path.getsize(fp),
+            })
+    shots.sort(key=lambda s: s["modified"])
+    return jsonify(shots)
+
+
+@app.route("/api/runs/<run_id>/screenshots/<path:filename>", methods=["GET"])
+def get_screenshot(run_id, filename):
+    """Serve a single screenshot PNG. Guarded against path traversal."""
+    run_dir = os.path.abspath(os.path.join(SCREENSHOTS_DIR, run_id))
+    target = os.path.abspath(os.path.join(run_dir, filename))
+    if not target.startswith(run_dir + os.sep) or not os.path.isfile(target):
+        return jsonify({"error": "Not found"}), 404
+    return send_from_directory(run_dir, os.path.basename(target))
 
 
 @app.route("/api/execute", methods=["POST"])
