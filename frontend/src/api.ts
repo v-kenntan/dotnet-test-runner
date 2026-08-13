@@ -27,7 +27,8 @@ export interface TestRun {
   started_at: string;
   finished_at: string | null;
   status: string;
-  environment_info: string;
+  /** Omitted by the run list endpoint; only present on single-run fetches. */
+  environment_info?: string;
   summary: string | null;
   sdk_version: string | null;
   sdk_path: string | null;
