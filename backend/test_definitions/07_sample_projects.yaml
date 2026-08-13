@@ -1,7 +1,7 @@
 tests:
 - id: sample-01-build-run
   category: Sample Projects
-  title: 1. Build and run a bundled sample project
+  title: 14. Build and run a bundled sample project
   description: >-
     Copy the bundled sample console app + class libraries shipped under
     test_assets/samples/<tfm> for the SDK under test, then build and run it via

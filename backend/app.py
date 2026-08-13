@@ -11,7 +11,7 @@ import webbrowser
 import threading
 from flask import Flask, request, jsonify, Response, send_from_directory
 import yaml
-from executor import TestExecutor
+from executor import TestExecutor, sweep_temp_artifacts
 
 
 def get_base_dir():
@@ -127,6 +127,8 @@ def load_builtin_definitions():
         conn.close()
         return
 
+    yaml_ids = set()
+
     for filename in sorted(os.listdir(DEFINITIONS_DIR)):
         if not filename.endswith((".yaml", ".yml")):
             continue
@@ -139,14 +141,27 @@ def load_builtin_definitions():
 
         for test in data["tests"]:
             test_id = test["id"]
+            yaml_ids.add(test_id)
             if test_id in existing:
-                # Already seeded: refresh ordering and step definitions from the
-                # YAML so changes to built-in tests (e.g. new screenshot steps)
-                # reach existing DBs too. Only built-ins are yaml-owned; user
+                # Already seeded: refresh the yaml-owned fields so edits to
+                # built-in tests (renames, new steps, re-ordering) reach
+                # existing DBs too. Only built-ins are yaml-owned; user
                 # created tests (is_builtin = 0) are left untouched.
                 conn.execute(
-                    "UPDATE test_cases SET sort_order = ?, steps = ? WHERE id = ? AND is_builtin = 1",
-                    (test.get("sort_order", 999), json.dumps(test["steps"]), test_id),
+                    """UPDATE test_cases
+                          SET category = ?, title = ?, description = ?, steps = ?,
+                              is_machine_mutating = ?, sort_order = ?, sdk_path = ?
+                        WHERE id = ? AND is_builtin = 1""",
+                    (
+                        test.get("category", "General"),
+                        test["title"],
+                        test.get("description", ""),
+                        json.dumps(test["steps"]),
+                        1 if test.get("machine_mutating", False) else 0,
+                        test.get("sort_order", 999),
+                        (test.get("sdk_path") or None),
+                        test_id,
+                    ),
                 )
                 continue
             conn.execute(
@@ -163,6 +178,18 @@ def load_builtin_definitions():
                     (test.get("sdk_path") or None),
                 ),
             )
+    # Prune built-ins whose YAML definition has been removed, so deleting a
+    # definition file actually takes effect on DBs that already seeded it.
+    # Guarded on yaml_ids being non-empty so a missing or unreadable
+    # definitions directory can never wipe every built-in test. Past run
+    # results are intentionally left alone to preserve history.
+    stale = existing - yaml_ids
+    if yaml_ids and stale:
+        conn.executemany(
+            "DELETE FROM test_cases WHERE id = ? AND is_builtin = 1",
+            [(test_id,) for test_id in stale],
+        )
+
     conn.commit()
     conn.close()
 
@@ -252,7 +279,14 @@ def delete_test(test_id):
 @app.route("/api/runs", methods=["GET"])
 def list_runs():
     conn = get_db()
-    rows = conn.execute("SELECT * FROM test_runs ORDER BY started_at DESC LIMIT 50").fetchall()
+    # environment_info holds the full `dotnet --info` output (several KB per run)
+    # and the history list never renders it, so it is excluded here. That keeps
+    # each row small enough for the client to hold every run and paginate/filter
+    # locally instead of round-tripping per page.
+    rows = conn.execute(
+        """SELECT id, started_at, finished_at, status, summary, sdk_version, sdk_path
+           FROM test_runs ORDER BY started_at DESC"""
+    ).fetchall()
     conn.close()
     runs = [dict(row) for row in rows]
     return jsonify(runs)
@@ -327,8 +361,12 @@ def start_execution():
         return jsonify({"error": "No tests selected"}), 400
 
     conn = get_db()
+    # ORDER BY sort_order so tests always execute in their defined sequence.
+    # Without it SQLite returns rows in arbitrary (rowid) order, so a run could
+    # e.g. install a workload after the test that depends on it.
     tests = conn.execute(
-        f"SELECT * FROM test_cases WHERE id IN ({','.join('?' * len(test_ids))})",
+        f"SELECT * FROM test_cases WHERE id IN ({','.join('?' * len(test_ids))})"
+        " ORDER BY sort_order, category, title",
         test_ids,
     ).fetchall()
     conn.close()
@@ -581,6 +619,11 @@ def run_app_window():
 if __name__ == "__main__":
     init_db()
     load_builtin_definitions()
+
+    # Reclaim temp dirs stranded by earlier crashes, plus retained working
+    # directories from failed tests that are now older than the cutoff.
+    # Backgrounded so a large sweep never delays startup.
+    threading.Thread(target=sweep_temp_artifacts, daemon=True).start()
 
     # APP_MODE=native|web (default: native). native = chromeless GUI window.
     mode = os.environ.get("APP_MODE", "native").strip().lower()

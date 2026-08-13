@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import shutil
 import uuid
 import subprocess
 import tempfile
@@ -102,6 +103,67 @@ def _get_screenshots_dir():
 SCREENSHOTS_DIR = _get_screenshots_dir()
 
 
+# Temp artifacts created per test/run. They are removed as soon as they are no
+# longer needed, but a crash or a hard kill can still strand them, and working
+# directories for failed tests are deliberately retained for debugging. The
+# startup sweep bounds that growth.
+TEMP_PREFIXES = ("dotnet_test_", "test_runner_", "notepad_shot_", "sdk_resolve_",
+                 "gui_shot_")
+TEMP_MAX_AGE_HOURS = 24 * 7
+
+
+def _rmtree(path: str, retries: int = 3) -> bool:
+    """Best-effort recursive delete.
+
+    On Windows a just-terminated dotnet/MSBuild process can briefly keep a
+    handle open, so a first attempt may fail with a sharing violation; retry a
+    few times before giving up. Never raises — cleanup must not fail a test.
+    """
+    if not path or not os.path.isdir(path):
+        return True
+    for attempt in range(retries):
+        try:
+            shutil.rmtree(path)
+            return True
+        except OSError:
+            if attempt == retries - 1:
+                return False
+            time.sleep(0.5)
+    return False
+
+
+def sweep_temp_artifacts(max_age_hours: int = TEMP_MAX_AGE_HOURS) -> int:
+    """Delete stranded temp artifacts older than max_age_hours.
+
+    Only touches entries this app creates (TEMP_PREFIXES) and only when they are
+    older than the cutoff, so a concurrently running test's directory can never
+    be removed. Returns the number of entries deleted.
+    """
+    root = tempfile.gettempdir()
+    cutoff = time.time() - max_age_hours * 3600
+    removed = 0
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return 0
+    for name in entries:
+        if not name.startswith(TEMP_PREFIXES):
+            continue
+        path = os.path.join(root, name)
+        try:
+            if os.path.getmtime(path) >= cutoff:
+                continue
+            if os.path.isdir(path):
+                if _rmtree(path):
+                    removed += 1
+            else:
+                os.unlink(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 # Matches MSBuild/NuGet/Roslyn diagnostic warnings, e.g. "warning NU1903:",
 # "warning CS0168:", "warning MSB3277:", "warning NETSDK1138:". These indicate a
 # step succeeded but emitted a diagnostic worth surfacing (e.g. a package with a
@@ -114,6 +176,14 @@ def _detect_warnings(text: str) -> bool:
     if not text:
         return False
     return bool(_WARNING_RE.search(text))
+
+
+# Title fragment common to this app's own windows: the Edge app window
+# (".NET SDK Test Runner") and the live console (".NET Test Runner - Run <id>").
+# Screenshot capture excludes them so a run never photographs the runner itself.
+# Matching the full ".NET SDK Test Runner" missed the console, whose title has no
+# "SDK", which is how the console ended up in GUI-window screenshots.
+OWN_WINDOW_TITLE = "Test Runner"
 
 
 def get_db():
@@ -209,23 +279,26 @@ class TestExecutor:
     def _capture_screen(self, out_path: str, pid: int = None, title_hint: str = None,
                         foreground_fallback: bool = False, exclude_title: str = None,
                         maximize: bool = False, descendant_of_pid: int = None,
-                        window_only: bool = False, screen_grab: bool = False) -> bool:
+                        window_only: bool = False) -> bool:
         """Capture a screenshot to out_path (PNG). Windows only.
 
-        When pid is given, capture that process's main window directly via
-        PrintWindow — this grabs the target window's pixels even when it never
-        came to the foreground (Windows sometimes only flashes its taskbar
-        button instead of focusing it), which otherwise made the full-screen
-        grab capture the wrong window. When the pid's window handle can't be
-        resolved (e.g. Windows 11 Notepad launches via a stub process, or a
-        browser opens a tab in an already-running process), fall back to
-        locating a top-level window whose title contains title_hint. When
-        foreground_fallback is set, use the current foreground window if neither
-        pid nor title match (useful for browsers, which bring themselves to the
-        front). Falls back to a full virtual-screen capture only if no window
-        can be resolved. Best-effort: returns True only if the PNG was written;
-        the failure reason is stored in self._last_capture_error for the caller
-        to log."""
+        The window's own pixels are read with PrintWindow + PW_RENDERFULLCONTENT,
+        which pulls from the window's DWM buffer. That is occlusion-proof: an
+        overlapping window (notably this app's own live console) cannot bleed into
+        the shot. A CopyFromScreen of the window rectangle is only a fallback for
+        when PrintWindow fails or returns an empty bitmap, since it captures
+        whatever happens to be physically on screen.
+
+        When pid is given, capture that process's main window. When the pid's
+        window handle can't be resolved (e.g. Windows 11 Notepad launches via a
+        stub process, or a browser opens a tab in an already-running process),
+        fall back to locating a top-level window whose title contains title_hint.
+        When foreground_fallback is set, use the current foreground window if
+        neither pid nor title match (useful for browsers, which bring themselves
+        to the front). Falls back to a full virtual-screen capture only if no
+        window can be resolved and window_only is not set. Best-effort: returns
+        True only if the PNG was written; the failure reason is stored in
+        self._last_capture_error for the caller to log."""
         self._last_capture_error = None
         if sys.platform != "win32":
             self._last_capture_error = "not supported on non-Windows"
@@ -244,7 +317,6 @@ class TestExecutor:
                 f"$useForeground = ${'true' if foreground_fallback else 'false'}",
                 f"$maximize = ${'true' if maximize else 'false'}",
                 f"$windowOnly = ${'true' if window_only else 'false'}",
-                f"$screenGrab = ${'true' if screen_grab else 'false'}",
                 "Add-Type -AssemblyName System.Windows.Forms",
                 "Add-Type -AssemblyName System.Drawing",
                 'Add-Type @"',
@@ -262,6 +334,21 @@ class TestExecutor:
                 "  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }",
                 "}",
                 '"@',
+                "# PrintWindow leaves the bitmap untouched (transparent black) when it",
+                "# cannot render the window. Detecting that exactly - rather than",
+                "# 'every pixel is the same colour' - matters because a freshly created",
+                "# WinForms/WPF window is legitimately a flat white/grey rectangle.",
+                "function Test-EmptyShot($bitmap) {",
+                "  $stepX = [Math]::Max(1, [int]($bitmap.Width / 16))",
+                "  $stepY = [Math]::Max(1, [int]($bitmap.Height / 16))",
+                "  for ($y = 0; $y -lt $bitmap.Height; $y += $stepY) {",
+                "    for ($x = 0; $x -lt $bitmap.Width; $x += $stepX) {",
+                "      $c = $bitmap.GetPixel($x, $y)",
+                "      if ($c.A -ne 0 -and ($c.R -ne 0 -or $c.G -ne 0 -or $c.B -ne 0)) { return $false }",
+                "    }",
+                "  }",
+                "  return $true",
+                "}",
                 "$hwnd = [IntPtr]::Zero",
                 "if ($procId -ne 0) {",
                 "  try {",
@@ -277,7 +364,10 @@ class TestExecutor:
                 "  # The GUI app window (WinForms/WPF) belongs to a descendant of the",
                 "  # launched shell/`dotnet run` process, not the process we started.",
                 "  # Walk the process tree from rootPid and grab the first descendant",
-                "  # that has a visible top-level window.",
+                "  # that has a visible top-level window. Console hosts are skipped:",
+                "  # `shell=True` puts cmd.exe/conhost.exe in that same tree and their",
+                "  # window would otherwise win the race against the app's own window.",
+                "  $consoleHosts = @('conhost','cmd','openconsole','windowsterminal','wt','powershell','pwsh')",
                 "  for ($i = 0; $i -lt 25; $i++) {",
                 "    try {",
                 "      $all = Get-CimInstance Win32_Process -ErrorAction Stop | Select-Object ProcessId, ParentProcessId",
@@ -288,7 +378,7 @@ class TestExecutor:
                 "        $cur = $queue.Dequeue()",
                 "        foreach ($pr in $all) { if ([int]$pr.ParentProcessId -eq $cur -and -not $desc.Contains([int]$pr.ProcessId)) { $desc.Add([int]$pr.ProcessId) | Out-Null; $queue.Enqueue([int]$pr.ProcessId) | Out-Null } }",
                 "      }",
-                "      $cand = Get-Process -ErrorAction SilentlyContinue | Where-Object { $desc.Contains($_.Id) -and $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1",
+                "      $cand = Get-Process -ErrorAction SilentlyContinue | Where-Object { $desc.Contains($_.Id) -and $_.MainWindowHandle -ne [IntPtr]::Zero -and -not ($consoleHosts -contains $_.ProcessName.ToLower()) -and ($excludeTitle -eq '' -or $_.MainWindowTitle -notlike ('*' + $excludeTitle + '*')) } | Select-Object -First 1",
                 "      if ($cand) { $hwnd = $cand.MainWindowHandle; break }",
                 "    } catch {}",
                 "    Start-Sleep -Milliseconds 200",
@@ -339,16 +429,16 @@ class TestExecutor:
                 "  if ($w -gt 0 -and $h -gt 0) {",
                 "    $bmp = New-Object System.Drawing.Bitmap $w, $h",
                 "    $g = [System.Drawing.Graphics]::FromImage($bmp)",
-                "    if ($screenGrab) {",
-                "      # WPF/WinForms client areas are GPU-composited; PrintWindow",
-                "      # often returns a blank/black bitmap. Grab the real on-screen",
-                "      # pixels of the (now foreground, topmost) window instead.",
+                "    # PW_RENDERFULLCONTENT (0x2) reads the window's own DWM buffer, so",
+                "    # GPU-composited WPF/WinForms content renders AND an overlapping",
+                "    # window (e.g. this app's live console) cannot bleed into the shot.",
+                "    $hdc = $g.GetHdc()",
+                "    $ok = [WinCap]::PrintWindow($hwnd, $hdc, 2)",
+                "    $g.ReleaseHdc($hdc)",
+                "    # CopyFromScreen is a last resort only: it captures whatever is",
+                "    # physically on screen, so it can pick up an occluding window.",
+                "    if ((-not $ok) -or (Test-EmptyShot $bmp)) {",
                 "      $g.CopyFromScreen($r.Left, $r.Top, 0, 0, (New-Object System.Drawing.Size($w, $h)))",
-                "    } else {",
-                "      $hdc = $g.GetHdc()",
-                "      $ok = [WinCap]::PrintWindow($hwnd, $hdc, 2)",
-                "      $g.ReleaseHdc($hdc)",
-                "      if (-not $ok) { $g.CopyFromScreen($r.Left, $r.Top, 0, 0, (New-Object System.Drawing.Size($w, $h))) }",
                 "    }",
                 "    $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)",
                 "    $g.Dispose(); $bmp.Dispose()",
@@ -418,8 +508,8 @@ class TestExecutor:
             shot_path = os.path.join(scr, f"{base}-{time.strftime('%Y%m%d-%H%M%S')}.png")
         target = shot_path or os.path.join(tempfile.gettempdir(), f"gui_shot_{idx}.png")
         saved = self._capture_screen(
-            target, descendant_of_pid=root_pid, exclude_title=".NET SDK Test Runner",
-            window_only=True, screen_grab=True,
+            target, descendant_of_pid=root_pid, exclude_title=OWN_WINDOW_TITLE,
+            window_only=True,
         )
         if saved and shot_path and os.path.isfile(shot_path):
             msg = f"🖼️ GUI window displayed; screenshot: {os.path.basename(shot_path)}"
@@ -655,7 +745,7 @@ class TestExecutor:
             self._console_procs.pop(run_id, None)
 
     def _close_console(self, run_id: str):
-        """Signal the console that the run is complete."""
+        """Signal the console that the run is complete, then reclaim its dir."""
         console_dir = self._console_procs.pop(run_id, None)
         if console_dir:
             try:
@@ -664,6 +754,16 @@ class TestExecutor:
                     f.write("done")
             except Exception:
                 pass
+
+            # The console batch is still polling inside this directory and holds
+            # runner.bat open, so deleting immediately would break its exit path.
+            # Reclaim it on a short delay off the run thread; if the window is
+            # left open the delete simply fails and the startup sweep gets it.
+            def _reclaim():
+                time.sleep(10)
+                _rmtree(console_dir)
+
+            threading.Thread(target=_reclaim, daemon=True).start()
 
     def cancel_run(self, run_id: str):
         if run_id in self._cancel_flags:
@@ -880,14 +980,44 @@ class TestExecutor:
         self, run_id: str, result_id: str, steps: List[dict],
         cancel_flag: threading.Event, conn: sqlite3.Connection, test_name: str = ""
     ) -> tuple:
+        """Run one test case in a temp working directory, then clean it up.
+
+        The directory is removed when the test passes. It is deliberately kept
+        when the test fails so the build output can be inspected, and the path
+        is surfaced in the run log; the startup sweep reclaims it later. A
+        cancelled test keeps nothing, since its directory is usually empty.
+        """
+        work_dir = tempfile.mkdtemp(prefix="dotnet_test_")
+        try:
+            all_passed, had_warnings = self._execute_test_steps(
+                run_id, result_id, steps, cancel_flag, conn, test_name, work_dir
+            )
+        except BaseException:
+            _rmtree(work_dir)
+            raise
+
+        if all_passed or cancel_flag.is_set():
+            _rmtree(work_dir)
+        else:
+            self._emit_event(run_id, {
+                "type": "step_output",
+                "result_id": result_id,
+                "step_index": -1,
+                "line": f"[info] Working directory kept for debugging: {work_dir}",
+            })
+        return (all_passed, had_warnings)
+
+    def _execute_test_steps(
+        self, run_id: str, result_id: str, steps: List[dict],
+        cancel_flag: threading.Event, conn: sqlite3.Connection, test_name: str,
+        work_dir: str,
+    ) -> tuple:
         """Execute all steps for a single test case.
 
         Returns (all_passed, had_warnings): all_passed is True if every step
         passed; had_warnings is True if any passing step emitted an
         MSBuild/NuGet-style warning (e.g. NU1903 vulnerability warning).
         """
-        # Create a temp working directory for this test
-        work_dir = tempfile.mkdtemp(prefix="dotnet_test_")
         current_dir = work_dir
         all_passed = True
         had_warnings = False
@@ -1365,8 +1495,17 @@ class TestExecutor:
                         wf.write('set "DOTNET_MULTILEVEL_LOOKUP="\n')
                     wf.write(f"cd /d {cwd}\n")
                     wf.write(f"echo {cwd}^> {cmd}\n")
-                    # Use && and || to reliably capture success/failure
-                    wf.write(f'{cmd} > "{stdout_file}" 2>&1 && (echo 0 > "{exitcode_file}") || (echo 1 > "{exitcode_file}")\n')
+                    # Capture the real exit code. The previous
+                    # `cmd && echo 0 || echo 1` form flattened every failure to
+                    # 1, so a step with expected_exit_code: 1 passed on *any*
+                    # error (including 9009, command not found). %ERRORLEVEL% is
+                    # expanded when this line is read, and each statement is on
+                    # its own line rather than in a parenthesised block, so no
+                    # delayed expansion is needed. The space before `>` is
+                    # required: `echo 1>file` would parse the digit as a stream
+                    # number and write "ECHO is off." instead of the code.
+                    wf.write(f'{cmd} > "{stdout_file}" 2>&1\n')
+                    wf.write(f'echo %ERRORLEVEL% > "{exitcode_file}"\n')
                     wf.write(f'type "{stdout_file}"\n')
                     wf.write("echo.\n")
                 # Tell the console to call the wrapper
@@ -1647,7 +1786,7 @@ class TestExecutor:
                     hint = re.sub(r"^https?://", "", verify_url).split("/")[0]
                     saved = self._capture_screen(
                         shot_path, title_hint=hint, foreground_fallback=True,
-                        exclude_title=".NET SDK Test Runner",
+                        exclude_title=OWN_WINDOW_TITLE,
                     )
                     if saved:
                         msg = f"📸 Browser screenshot saved: {os.path.basename(shot_path)}"
