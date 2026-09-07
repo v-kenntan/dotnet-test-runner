@@ -1133,3 +1133,84 @@ body {
   justify-content: flex-end;
   margin-bottom: 0.5rem;
 }
+/* Dev certificate prompt */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-width: 560px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.modal h3 {
+  font-size: 1.05rem;
+}
+
+.modal p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.modal-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.9rem;
+}
+
+.modal-code {
+  display: block;
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.85rem;
+  color: var(--success);
+  user-select: all;
+}
+
+.modal-error {
+  color: var(--error);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.modal-actions button {
+  background: var(--surface-2);
+  border: none;
+  color: var(--text);
+  padding: 0.45rem 0.9rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.modal-actions button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.modal-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

@@ -10,6 +10,8 @@ import threading
 import time
 import sqlite3
 import ssl
+import ctypes
+import platform
 import urllib.request
 import webbrowser
 from datetime import datetime
@@ -162,6 +164,124 @@ def sweep_temp_artifacts(max_age_hours: int = TEMP_MAX_AGE_HOURS) -> int:
         except OSError:
             continue
     return removed
+
+
+def _force_foreground(hwnd: int) -> bool:
+    """Drag a window in front of whatever currently has focus. Windows only.
+
+    A background process (this app while Edge/Notepad has focus) is normally
+    refused by SetForegroundWindow, so an alert only flashes in the taskbar
+    instead of popping up. Zeroing the foreground lock timeout and briefly
+    attaching to the foreground window's input queue lifts that restriction,
+    which is the whole point of the completion alert (issue #67).
+    """
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    SW_SHOW, SW_RESTORE, HWND_TOPMOST = 5, 9, -1
+    SWP_NOSIZE, SWP_NOMOVE, SWP_SHOWWINDOW = 0x1, 0x2, 0x40
+    SPI_GETFOREGROUNDLOCKTIMEOUT, SPI_SETFOREGROUNDLOCKTIMEOUT = 0x2000, 0x2001
+    SPIF_SENDCHANGE = 0x2
+
+    previous = ctypes.c_uint(0)
+    locked = bool(user32.SystemParametersInfoW(
+        SPI_GETFOREGROUNDLOCKTIMEOUT, 0, ctypes.byref(previous), 0))
+    if locked:
+        user32.SystemParametersInfoW(
+            SPI_SETFOREGROUNDLOCKTIMEOUT, 0, ctypes.c_void_p(0), SPIF_SENDCHANGE)
+
+    foreground = user32.GetForegroundWindow()
+    this_thread = kernel32.GetCurrentThreadId()
+    other_thread = user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+    attached = bool(other_thread) and other_thread != this_thread and bool(
+        user32.AttachThreadInput(this_thread, other_thread, True))
+    try:
+        user32.ShowWindow(hwnd, SW_RESTORE if user32.IsIconic(hwnd) else SW_SHOW)
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+        user32.BringWindowToTop(hwnd)
+        ok = bool(user32.SetForegroundWindow(hwnd))
+        user32.SetActiveWindow(hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(this_thread, other_thread, False)
+        if locked:
+            user32.SystemParametersInfoW(
+                SPI_SETFOREGROUNDLOCKTIMEOUT, 0,
+                ctypes.c_void_p(previous.value), SPIF_SENDCHANGE)
+    if not ok:
+        _flash_until_opened(hwnd)
+    return ok
+
+
+def _flash_until_opened(hwnd: int):
+    """Blink a window's taskbar button until the user opens it. Windows only.
+
+    Last resort for when Windows still refuses to hand over focus: a steady
+    blink is at least noticeable, unlike FlashWindow's single toggle.
+    """
+    class FLASHWINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("hwnd", ctypes.c_void_p),
+                    ("dwFlags", ctypes.c_uint), ("uCount", ctypes.c_uint),
+                    ("dwTimeout", ctypes.c_uint)]
+
+    FLASHW_ALL, FLASHW_TIMERNOFG = 0x3, 0xC
+    info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), ctypes.c_void_p(hwnd),
+                      FLASHW_ALL | FLASHW_TIMERNOFG, 0, 0)
+    try:
+        ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
+    except Exception:
+        pass
+
+
+def _own_dialog_hwnd() -> int:
+    """Handle of a visible dialog (class #32770) owned by this process, or 0."""
+    user32 = ctypes.windll.user32
+    found = ctypes.c_void_p(0)
+    my_pid = os.getpid()
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def _visit(hwnd, _lparam):
+        pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value != my_pid or not user32.IsWindowVisible(hwnd):
+            return True
+        name = ctypes.create_unicode_buffer(32)
+        user32.GetClassNameW(hwnd, name, 32)
+        if name.value != "#32770":
+            return True
+        found.value = hwnd
+        return False
+
+    user32.EnumWindows(_visit, 0)
+    return found.value or 0
+
+
+# Runtime identifier used by `{rid}` in test steps, e.g. "win-x64" on an x64 VM
+# and "win-arm64" on an ARM64 one, so self-contained publish tests target the
+# machine they run on instead of a hard-coded architecture (issue #69).
+_RID_RE = re.compile(r"^\s*RID:\s+(\S+)", re.MULTILINE)
+
+_ARCH_ALIASES = {
+    "amd64": "x64", "x86_64": "x64", "aarch64": "arm64",
+    "i386": "x86", "i686": "x86",
+}
+
+
+def _host_rid() -> str:
+    """This machine's runtime identifier, e.g. win-x64 / win-arm64."""
+    arch = (platform.machine() or "").lower()
+    arch = _ARCH_ALIASES.get(arch, arch or "x64")
+    os_part = {"win32": "win", "darwin": "osx"}.get(sys.platform, "linux")
+    return f"{os_part}-{arch}"
+
+
+def _parse_rid(dotnet_info: str) -> str:
+    """RID reported by `dotnet --info`, falling back to this machine's RID.
+
+    Preferring dotnet's own value keeps a non-native SDK honest: an x86 SDK on
+    an x64 machine reports win-x86, which is what its publishes should target.
+    """
+    match = _RID_RE.search(dotnet_info or "")
+    return match.group(1) if match else _host_rid()
 
 
 # Matches MSBuild/NuGet/Roslyn diagnostic warnings, e.g. "warning NU1903:",
@@ -765,6 +885,66 @@ class TestExecutor:
 
             threading.Thread(target=_reclaim, daemon=True).start()
 
+    def _notify_run_complete(self, status: str, counts: dict):
+        """Pop a foreground message box when a run finishes (Windows only).
+
+        A test's Notepad or browser window is often left sitting on top of the
+        app, so the in-app "Run complete" line and the console are easy to miss
+        (issue #67). MB_SETFOREGROUND|MB_TOPMOST puts the alert above whatever
+        is on screen, and the icon plays the system sound. Best-effort and off
+        the run thread: the box waits for a click, and a notification failure
+        must never affect the run's result.
+        """
+        if sys.platform != "win32":
+            return
+        done = "cancelled" if status == "cancelled" else "complete"
+        text = "\n".join([
+            f"Test run {done}.",
+            "",
+            f"Passed: {counts.get('passed', 0)}",
+            f"Passed with warnings: {counts.get('warnings', 0)}",
+            f"Failed: {counts.get('failed', 0)}",
+            f"Skipped: {counts.get('skipped', 0)}",
+        ])
+        MB_OK, MB_ICONWARNING, MB_ICONINFORMATION = 0x0, 0x30, 0x40
+        MB_SETFOREGROUND, MB_TOPMOST = 0x10000, 0x40000
+        icon = MB_ICONWARNING if (counts.get("failed") or status == "cancelled") else MB_ICONINFORMATION
+        flags = MB_OK | icon | MB_SETFOREGROUND | MB_TOPMOST
+
+        def _raise_box():
+            """Pull the box in front once it exists.
+
+            MB_SETFOREGROUND alone loses to Windows' foreground lock when
+            another app (Edge, Notepad, a test's browser window) holds focus:
+            the box then only blinks in the taskbar instead of popping up.
+            Poll for the dialog this process just created, force it to the
+            front, and confirm it really is the foreground window — the first
+            attempt can lose a race with a window that is still settling.
+            """
+            user32 = ctypes.windll.user32
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                try:
+                    hwnd = _own_dialog_hwnd()
+                    if hwnd:
+                        _force_foreground(hwnd)
+                        if user32.GetForegroundWindow() == hwnd:
+                            time.sleep(0.5)
+                            if user32.GetForegroundWindow() == hwnd:
+                                return
+                except Exception:
+                    return
+                time.sleep(0.25)
+
+        def _show():
+            try:
+                threading.Thread(target=_raise_box, daemon=True).start()
+                ctypes.windll.user32.MessageBoxW(0, text, ".NET SDK Test Runner", flags)
+            except Exception:
+                pass
+
+        threading.Thread(target=_show, daemon=True).start()
+
     def cancel_run(self, run_id: str):
         if run_id in self._cancel_flags:
             self._cancel_flags[run_id].set()
@@ -834,6 +1014,8 @@ class TestExecutor:
 
         # Capture environment info
         env_info = self._capture_environment(run_id)
+        # RID reported by this run's SDK, used by `{rid}` in publish steps.
+        self._runs[run_id]["_rid"] = _parse_rid(env_info)
         conn.execute(
             "UPDATE test_runs SET environment_info=? WHERE id=?",
             (env_info, run_id),
@@ -975,6 +1157,10 @@ class TestExecutor:
         # Cleanup
         self._cancel_flags.pop(run_id, None)
         self._close_console(run_id)
+        self._notify_run_complete(
+            final_status,
+            {"passed": passed, "failed": failed, "skipped": skipped, "warnings": warned},
+        )
 
     def _execute_test(
         self, run_id: str, result_id: str, steps: List[dict],
@@ -1029,6 +1215,8 @@ class TestExecutor:
         # {tfm} in step commands/content tracks the selected SDK's target framework
         # moniker (e.g. 11.0.100 -> net11.0). net48 and other literals are untouched.
         tfm = f"net{sdk_version.split('.')[0]}.0" if sdk_version else "net10.0"
+        # {rid} tracks the machine/SDK architecture (win-x64, win-arm64, ...).
+        rid = run.get("_rid") or _host_rid()
         if sdk_version:
             global_json = os.path.join(work_dir, "global.json")
             with open(global_json, "w") as f:
@@ -1044,7 +1232,7 @@ class TestExecutor:
             expected_exit = step.get("expected_exit_code", 0)
 
             if step_type == "command":
-                cmd = step["command"].replace("{tfm}", tfm).replace("{assets}", ASSETS_DIR)
+                cmd = step["command"].replace("{tfm}", tfm).replace("{rid}", rid).replace("{assets}", ASSETS_DIR)
                 # Handle cd commands by updating current_dir
                 if cmd.strip().startswith("cd "):
                     prev_dir = current_dir
@@ -1290,7 +1478,7 @@ class TestExecutor:
             elif step_type == "write_file":
                 filepath = os.path.join(current_dir, step["path"])
                 os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                content = step["content"].replace("{tfm}", tfm).replace("{assets}", ASSETS_DIR)
+                content = step["content"].replace("{tfm}", tfm).replace("{rid}", rid).replace("{assets}", ASSETS_DIR)
 
                 start_time = time.time()
 

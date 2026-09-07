@@ -18,8 +18,8 @@ tests:
 - id: publish-16-self-contained
   category: Publish
   title: 16. Self-contained publish
-  description: Create a console app, build it, run it, and publish self-contained
-    for multiple RIDs
+  description: Create a console app, build it, run it, then publish it self-contained
+    for this machine's RID (win-x64 or win-arm64) and run the published app
   steps:
   - type: command
     command: dotnet new console -o f4
@@ -30,7 +30,8 @@ tests:
   - type: command
     command: dotnet run
   - type: command
-    command: dotnet publish -r win-x64 --sc -o pub
+    command: dotnet publish -r {rid} --sc -o pub
+    timeout: 600
   - type: command
     command: cd pub
   - type: command

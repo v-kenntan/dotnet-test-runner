@@ -453,6 +453,59 @@ def list_sdks():
         return jsonify({"sdks": [], "error": str(e)})
 
 
+def _dotnet_exe(sdk_path=None):
+    """dotnet executable to use: a pinned SDK install root, else the PATH one."""
+    if sdk_path:
+        exe = os.path.join(sdk_path, "dotnet.exe")
+        if os.path.isfile(exe):
+            return exe
+    return "dotnet"
+
+
+def _dev_certs(args, sdk_path=None, timeout=60):
+    """Run `dotnet dev-certs https <args>` and report whether the cert is trusted."""
+    _refresh_path()
+    try:
+        result = subprocess.run(
+            [_dotnet_exe(sdk_path), "dev-certs", "https"] + args,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return jsonify({
+            "trusted": result.returncode == 0,
+            "exit_code": result.returncode,
+            "output": (result.stdout or result.stderr or "").strip(),
+        })
+    except FileNotFoundError:
+        return jsonify({"trusted": False, "exit_code": -1, "output": "dotnet not found in PATH"})
+    except subprocess.TimeoutExpired:
+        return jsonify({"trusted": False, "exit_code": -1,
+                        "output": "Timed out waiting for dotnet dev-certs (was the security dialog left open?)"})
+    except Exception as e:
+        return jsonify({"trusted": False, "exit_code": -1, "output": str(e)})
+
+
+@app.route("/api/dev-certs", methods=["GET"])
+def check_dev_certs():
+    """Report whether a trusted ASP.NET Core HTTPS development certificate exists.
+
+    Tests that host HTTPS sites (test cases 4 and 9) trigger an interactive
+    Windows trust dialog when the certificate is missing or untrusted, which
+    stalls a run midway. The UI checks this before starting a run instead.
+    """
+    return _dev_certs(["--check", "--trust"], request.args.get("sdk_path") or None)
+
+
+@app.route("/api/dev-certs/trust", methods=["POST"])
+def trust_dev_certs():
+    """Run `dotnet dev-certs https --trust` up front, before any test starts.
+
+    Windows shows a security dialog the user has to accept, hence the long
+    timeout — the call blocks until they answer it.
+    """
+    sdk_path = (request.json or {}).get("sdk_path") or None
+    return _dev_certs(["--trust"], sdk_path, timeout=300)
+
+
 @app.route("/api/pick-folder", methods=["POST"])
 def pick_folder():
     """Show a native folder-picker so the user can choose an SDK install folder.

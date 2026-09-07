@@ -45,6 +45,18 @@ A test can capture a screenshot as evidence using a `screenshot` step (Windows o
 
 Screenshots are saved under `screenshots/<run_id>/` next to the app's database and can be browsed in the **Screenshots** tab of a run's detail view. **Workload Scenario 1** uses this to capture the `installertype` folder (per issue #47).
 
+## HTTPS development certificate
+
+Test cases **4** (C# web/mvc/webapi) and **9** (F# web/mvc/webapi) host HTTPS sites, which requires a trusted ASP.NET Core development certificate. If it is missing, Windows pops a security dialog *while the run is in progress* and the run stalls until someone clicks it.
+
+To avoid that, the runner checks the certificate **before** starting a run that contains those tests (`dotnet dev-certs https --check --trust`). If it isn't trusted, a prompt appears with three choices:
+
+- **Trust certificate** — runs `dotnet dev-certs https --trust` up front; accept the Windows security dialog, and the run starts right after
+- **Run anyway** — starts the run without trusting (the dialog may then interrupt it midway)
+- **Cancel run** — nothing is executed
+
+Runs without HTTPS tests skip the check entirely.
+
 ## Usage
 
 1. **Select tests** from the left panel (grouped by category)
@@ -61,6 +73,10 @@ Each test reports one of these outcomes:
 - **Passed with warnings** ⚠ — all steps succeeded but the output contained an MSBuild/NuGet-style warning (e.g. `warning NU1903:` for a package with a known vulnerability). Counted separately from clean passes.
 - **Failed** ✗ — a step returned an unexpected exit code or failed an output assertion
 - **Skipped** — the test was cancelled before it ran
+
+### Completion Notification
+
+When a run finishes, a Windows message box pops up in the foreground with the pass/fail/warning/skip counts. It is shown topmost on purpose: a test's Notepad or browser window often ends up covering the app, which made it hard to tell whether the run had finished. Windows normally refuses to give focus to a background process, so the app also forces the box to the front (briefly clearing the foreground lock timeout and attaching to the active window's input queue); if Windows still refuses, the taskbar button blinks until the box is opened. The app window's title also changes to `✅ Run complete` / `❌ Run complete` / `⛔ Run cancelled` while the result is on screen.
 
 ## Building from Source
 
@@ -125,6 +141,18 @@ tests:
 |------|--------|-------------|
 | `command` | command, timeout, expected_exit_code, assert_output_contains, continue_on_error | Execute a CLI command |
 | `write_file` | path, content | Write content to a file |
+
+### Placeholders
+
+Step `command` and `write_file` `content` support these placeholders:
+
+| Placeholder | Expands to | Example |
+|-------------|-----------|---------|
+| `{tfm}` | Target framework moniker of the SDK the run resolved | `net11.0` |
+| `{rid}` | Runtime identifier reported by `dotnet --info` (falls back to the machine's) | `win-x64`, `win-arm64` |
+| `{assets}` | Path to the bundled read-only `test_assets` folder | — |
+
+`{rid}` is what makes the self-contained publish tests (cases **3** and **16**) work unchanged on both x64 and ARM64 VMs: `dotnet publish -r {rid} --sc` publishes `win-arm64` on an ARM64 machine and `win-x64` on an x64 one, and `cd bin\Release\{tfm}\{rid}\publish` follows the output there.
 
 ## Adding Tests via UI
 

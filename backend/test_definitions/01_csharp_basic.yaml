@@ -38,7 +38,9 @@ tests:
 - id: cs-03-solution-class-libraries
   category: C# Basic
   title: 3. Solution with console + class libraries (.NET & .NET Standard)
-  description: Create a solution with a console app referencing .NET and .NET Standard class libraries
+  description: Create a solution with a console app referencing .NET and .NET Standard
+    class libraries, then publish it both self-contained (for this machine's RID) and
+    framework-dependent, running each published app
   steps:
   - type: command
     command: dotnet new sln -o s1
@@ -119,6 +121,42 @@ tests:
     command: dotnet build
   - type: command
     command: dotnet run
+    assert_output_contains:
+    - Hello World!
+    - Hi all 2.1
+    - Hi all 8.0
+  - type: command
+    command: dotnet publish -r {rid} --sc
+    timeout: 600
+  - type: command
+    command: cd bin\Release\{tfm}\{rid}\publish
+  - type: command
+    command: dotnet a.dll
+    assert_output_contains:
+    - Hello World!
+    - Hi all 2.1
+    - Hi all 8.0
+  - type: command
+    command: a.exe
+    assert_output_contains:
+    - Hello World!
+    - Hi all 2.1
+    - Hi all 8.0
+  - type: command
+    command: cd ..\..\..\..\..
+  - type: command
+    command: dotnet publish -f {tfm}
+    timeout: 300
+  - type: command
+    command: cd bin\Release\{tfm}\publish
+  - type: command
+    command: dotnet a.dll
+    assert_output_contains:
+    - Hello World!
+    - Hi all 2.1
+    - Hi all 8.0
+  - type: command
+    command: a.exe
     assert_output_contains:
     - Hello World!
     - Hi all 2.1
