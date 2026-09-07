@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, deleteTest, TestRun, fetchRunDetails } from './api'
+import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, deleteTest, TestRun, fetchRunDetails, fetchDevCertStatus } from './api'
 import { resultLine } from './report'
 import TestList from './components/TestList'
 import TestRunner from './components/TestRunner'
@@ -9,8 +9,25 @@ import ResultsSummary from './components/ResultsSummary'
 import TestEditor from './components/TestEditor'
 import Dashboard from './components/Dashboard'
 import RunDetail from './components/RunDetail'
+import DevCertPrompt from './components/DevCertPrompt'
 
 type View = 'dashboard' | 'tests' | 'running' | 'history_detail' | 'editor';
+
+const BASE_TITLE = '.NET SDK Test Runner';
+
+/** Steps that host or browse an HTTPS site need a trusted dev certificate. */
+const HTTPS_STEP_RE = /dev-certs\s+https|https:\/\/localhost/i;
+
+function needsDevCert(test: TestCase): boolean {
+  return (test.steps || []).some(s => HTTPS_STEP_RE.test(`${s.command || ''} ${s.verify_url || ''}`));
+}
+
+interface PendingRun {
+  ids: string[];
+  sdkVersion?: string;
+  sdkPath?: string;
+  httpsTests: TestCase[];
+}
 
 export default function App() {
   const [view, setView] = useState<View>('dashboard');
@@ -30,6 +47,8 @@ export default function App() {
   const [runnerTests, setRunnerTests] = useState<TestCase[]>([]);
   const [selectedRun, setSelectedRun] = useState<TestRun | null>(null);
   const [runResults, setRunResults] = useState<any[]>([]);
+  const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
+  const [checkingCert, setCheckingCert] = useState(false);
   const logViewerRef = useRef<LogViewerHandle>(null);
 
   const refreshSdk = useCallback(async () => {
@@ -94,13 +113,14 @@ export default function App() {
     });
   }, []);
 
-  const runTests = useCallback(async (ids: string[], sdkVersion?: string, sdkPath?: string) => {
+  const startRun = useCallback(async (ids: string[], sdkVersion?: string, sdkPath?: string) => {
     setLogs([]);
     setSummary(null);
     setTestStatuses({});
     setRunStatus('running');
     setRunnerTests(tests.filter(t => ids.includes(t.id)));
     setView('running');
+    document.title = `⏳ Running — ${BASE_TITLE}`;
 
     const { run_id } = await startExecution(ids, sdkVersion, sdkPath);
     setRunId(run_id);
@@ -121,14 +141,38 @@ export default function App() {
           setTestStatuses(prev => ({ ...prev, [event.test_case_id as string]: event.status as string }));
           setLogs(prev => [...prev, resultLine(event.status as string)]);
           break;
-        case 'run_end':
+        case 'run_end': {
           setRunStatus('completed');
           setSummary(event.summary as { passed: number; failed: number; skipped: number });
           setLogs(prev => [...prev, `\n✅ Run complete: ${JSON.stringify(event.summary)}`]);
+          // The window is often buried behind a test's Notepad/browser window,
+          // so mark completion in the title too (issue #67 — the backend also
+          // pops a foreground message box).
+          const cancelled = event.status === 'cancelled';
+          const failed = (event.summary as { failed: number }).failed;
+          const icon = cancelled ? '⛔' : failed ? '❌' : '✅';
+          document.title = `${icon} Run ${cancelled ? 'cancelled' : 'complete'} — ${BASE_TITLE}`;
           break;
+        }
       }
     });
   }, [tests]);
+
+  // Gate: tests that host HTTPS sites (test cases 4 and 9) pop a Windows trust
+  // dialog mid-run when no dev certificate is trusted. Prompt for it up front.
+  const runTests = useCallback(async (ids: string[], sdkVersion?: string, sdkPath?: string) => {
+    const httpsTests = tests.filter(t => ids.includes(t.id) && needsDevCert(t));
+    if (httpsTests.length > 0) {
+      setCheckingCert(true);
+      const status = await fetchDevCertStatus(sdkPath).catch(() => null);
+      setCheckingCert(false);
+      if (status && !status.trusted) {
+        setPendingRun({ ids, sdkVersion, sdkPath, httpsTests });
+        return;
+      }
+    }
+    await startRun(ids, sdkVersion, sdkPath);
+  }, [tests, startRun]);
 
   const handleRun = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -155,7 +199,7 @@ export default function App() {
   }, [tests]);
 
   const handleRetryRun = useCallback(async (run: TestRun) => {
-    if (runStatus === 'running') return;
+    if (runStatus === 'running' || checkingCert || pendingRun) return;
     const { results } = await fetchRunDetails(run.id);
     const testIds = (results as any[]).map((r: any) => r.test_case_id as string);
     if (testIds.length === 0) return;
@@ -178,7 +222,7 @@ export default function App() {
 
     const sdkVersion = run.sdk_version || selectedSdk;
     await runTests(availableIds, sdkVersion, run.sdk_path || undefined);
-  }, [runStatus, selectedSdk, tests, runTests]);
+  }, [runStatus, checkingCert, pendingRun, selectedSdk, tests, runTests]);
 
   const handleRefreshTests = useCallback(async () => {
     const data = await fetchTests();
@@ -271,8 +315,8 @@ export default function App() {
             <div className="toolbar">
               <button onClick={() => handleSelectAll()}>Select All</button>
               <button onClick={handleDeselectAll}>Deselect All</button>
-              <button className="run-btn" onClick={handleRun} disabled={selectedIds.size === 0 || runStatus === 'running'}>
-                {runStatus === 'running' ? '⏳ Running...' : `▶ Run Selected (${selectedIds.size})`}
+              <button className="run-btn" onClick={handleRun} disabled={selectedIds.size === 0 || runStatus === 'running' || checkingCert || pendingRun !== null}>
+                {runStatus === 'running' ? '⏳ Running...' : checkingCert ? '⏳ Checking HTTPS certificate...' : `▶ Run Selected (${selectedIds.size})`}
               </button>
             </div>
             <TestList
@@ -311,6 +355,19 @@ export default function App() {
           />
         )}
       </main>
+
+      {pendingRun && (
+        <DevCertPrompt
+          tests={pendingRun.httpsTests}
+          sdkPath={pendingRun.sdkPath}
+          onProceed={() => {
+            const { ids, sdkVersion, sdkPath } = pendingRun;
+            setPendingRun(null);
+            startRun(ids, sdkVersion, sdkPath);
+          }}
+          onCancel={() => setPendingRun(null)}
+        />
+      )}
     </div>
   );
 }

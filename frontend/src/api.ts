@@ -20,6 +20,7 @@ export interface Step {
   expected_exit_code?: number | number[];
   assert_output_contains?: string[];
   continue_on_error?: boolean;
+  verify_url?: string;
 }
 
 export interface TestRun {
@@ -133,6 +134,27 @@ export interface SdkEntry {
 
 export async function fetchSdks(): Promise<{ sdks: SdkEntry[]; error?: string }> {
   const res = await fetch(`${API_BASE}/sdks`);
+  return res.json();
+}
+
+export interface DevCertStatus {
+  trusted: boolean;
+  exit_code: number;
+  output: string;
+}
+
+export async function fetchDevCertStatus(sdkPath?: string): Promise<DevCertStatus> {
+  const query = sdkPath ? `?sdk_path=${encodeURIComponent(sdkPath)}` : '';
+  const res = await fetch(`${API_BASE}/dev-certs${query}`);
+  return res.json();
+}
+
+export async function trustDevCert(sdkPath?: string): Promise<DevCertStatus> {
+  const res = await fetch(`${API_BASE}/dev-certs/trust`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sdk_path: sdkPath || null }),
+  });
   return res.json();
 }
 
