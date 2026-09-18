@@ -1,10 +1,21 @@
+# Workload Sets (test plan: "Workload sets").
+#
+# These cases run as one continuous sequence (`continuous: true`): they share a
+# single working directory and, if one fails, the rest are skipped instead of
+# running against a half-updated machine.
+#
+# Four of them update/install a *specific* workload set version. That version
+# only exists on the workloads feed, so it cannot be derived — open the test in
+# the editor and fill in "Workload set version" before running. The steps below
+# reference it as {workload_version}.
 tests:
 - id: workload-sets-update-latest-exe
   category: Workload Sets
   title: Update to latest workload set (exe)
   description: Install MAUI, switch to workload-set mode, and update to the latest
-    workload set
+    workload set. No version needed — this one takes whatever is newest.
   machine_mutating: true
+  continuous: true
   steps:
   - type: command
     command: dotnet workload search version
@@ -32,17 +43,26 @@ tests:
 - id: workload-sets-update-specific-exe
   category: Workload Sets
   title: Update to specific workload set (exe)
-  description: Switch to manifest mode, update workloads, and inspect workload version
-    information
+  description: 'Switch back to manifest mode, then update to a chosen workload set
+    version. Requires the "Workload set version" field (e.g. 8.0.400) — pick one
+    from the `dotnet workload search version` output of a previous run.'
   machine_mutating: true
+  continuous: true
   steps:
+  - type: command
+    command: dotnet workload search version
   - type: command
     command: dotnet workload config --update-mode manifests
   - type: command
     command: dotnet workload update
     timeout: 600
   - type: command
+    command: dotnet workload update --version {workload_version}
+    timeout: 600
+  - type: command
     command: dotnet workload --info
+    assert_output_contains:
+    - '{workload_version}'
   - type: command
     command: dotnet workload list
   - type: command
@@ -51,42 +71,10 @@ tests:
 - id: workload-sets-pin-specific-exe
   category: Workload Sets
   title: Pin to specific workload set (exe)
-  description: Create a global.json and inspect workload state after updating
+  description: 'Pin a workload set through global.json: create one, add
+    "workloadVersion", then update. Requires the "Workload set version" field.'
   machine_mutating: true
-  steps:
-  - type: command
-    command: mkdir MyTest
-  - type: command
-    command: cd MyTest
-  - type: command
-    command: dotnet new global.json
-  - type: command
-    command: dotnet workload update
-    timeout: 600
-  - type: command
-    command: dotnet workload list
-  - type: command
-    command: dotnet workload --info
-  sort_order: 26
-- id: workload-sets-install-specific-version-exe
-  category: Workload Sets
-  title: Install workload with specific version (exe)
-  description: Inspect workload versions and installed workloads for a specific-version
-    install scenario
-  machine_mutating: true
-  steps:
-  - type: command
-    command: dotnet workload search version
-  - type: command
-    command: dotnet workload list
-  - type: command
-    command: dotnet workload --info
-  sort_order: 27
-- id: workload-sets-update-different-band-exe
-  category: Workload Sets
-  title: Update workload sets from different band (exe)
-  description: Switch to manifest mode, update, and inspect workload information
-  machine_mutating: true
+  continuous: true
   steps:
   - type: command
     command: dotnet workload config --update-mode manifests
@@ -94,7 +82,80 @@ tests:
     command: dotnet workload update
     timeout: 600
   - type: command
+    command: mkdir MyTest
+  - type: command
+    command: cd MyTest
+  - type: command
+    command: dotnet new global.json --force
+  # The doc says to create global.json and rename "version" to "workloadVersion".
+  # Adding the property in place keeps the SDK pin the runner wrote, and echoing
+  # the file back makes the pinned version visible in the run log.
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = 'global.json';
+      $j = Get-Content $p -Raw | ConvertFrom-Json; $j | Add-Member -Force
+      -NotePropertyName workloadVersion -NotePropertyValue '{workload_version}';
+      $j | ConvertTo-Json -Depth 10 | Set-Content $p -Encoding UTF8;
+      Get-Content $p"
+    assert_output_contains:
+    - workloadVersion
+    - '{workload_version}'
+  - type: command
+    command: dotnet workload update
+    timeout: 600
+  - type: command
+    command: dotnet workload list
+  - type: command
     command: dotnet workload --info
+    assert_output_contains:
+    - '{workload_version}'
+  sort_order: 26
+- id: workload-sets-install-specific-version-exe
+  category: Workload Sets
+  title: Install workload with specific version (exe)
+  description: 'Install a workload at a specific workload set version
+    (`dotnet workload install maui --version <version>`). Requires the
+    "Workload set version" field.'
+  machine_mutating: true
+  continuous: true
+  steps:
+  - type: command
+    command: dotnet workload search version
+  - type: command
+    command: dotnet workload list
+  - type: command
+    command: dotnet workload install maui --version {workload_version}
+    timeout: 1800
+  - type: command
+    command: dotnet workload list
+    assert_output_contains:
+    - maui
+  - type: command
+    command: dotnet workload --info
+  sort_order: 27
+- id: workload-sets-update-different-band-exe
+  category: Workload Sets
+  title: Update workload sets from different band (exe)
+  description: 'Update to a workload set from a different feature band than the SDK.
+    Set "Workload set version" to a version one band below the SDK — 8.0.3xx on an
+    8.0.4xx SDK, 9.0.2xx on a 9.0.3xx SDK, 10.0.1xx on a 10.0.2xx SDK.'
+  machine_mutating: true
+  continuous: true
+  steps:
+  - type: command
+    command: dotnet workload search version
+  - type: command
+    command: dotnet workload config --update-mode manifests
+  - type: command
+    command: dotnet workload update
+    timeout: 600
+  - type: command
+    command: dotnet workload update --version {workload_version}
+    timeout: 600
+  - type: command
+    command: dotnet workload --info
+    assert_output_contains:
+    - '{workload_version}'
   - type: command
     command: dotnet workload list
   sort_order: 28
@@ -102,8 +163,9 @@ tests:
   category: Workload Sets
   title: Switch back to loose manifests (exe)
   description: Switch update mode back to manifests, update, and inspect workload
-    information
+    information. No version needed.
   machine_mutating: true
+  continuous: true
   steps:
   - type: command
     command: dotnet workload config --update-mode manifests

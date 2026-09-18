@@ -9,6 +9,10 @@ export interface TestCase {
   is_builtin: boolean;
   is_machine_mutating: boolean;
   sdk_path?: string | null;
+  /** Workload set version this test pins via the {workload_version} placeholder. */
+  workload_version?: string | null;
+  /** Runs as part of a continuous chain: shared working dir, skipped after a failure. */
+  is_continuous?: boolean;
 }
 
 export interface Step {

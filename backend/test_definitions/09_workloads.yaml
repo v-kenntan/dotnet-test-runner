@@ -116,8 +116,12 @@ tests:
 - id: workloads-scenario-2-wasm-android
   category: Workloads
   title: 'Workload Scenario 2: wasm-tools + android'
-  description: Install wasm-tools and android, publish a Blazor WASM app, repair,
-    and uninstall workloads
+  description: >-
+    Install wasm-tools and android with --skip-manifest-update, publish a Blazor
+    WASM app without AOT (-o 1p0), enable RunAOTCompilation and publish again
+    (-o 2p0), then compare the two outputs. Afterwards delete the contents of the
+    MonoAOTCompiler.Task Sdk pack to damage the workload, restore it with
+    "dotnet workload repair", and uninstall both workloads.
   machine_mutating: true
   steps:
   - type: command
@@ -126,28 +130,193 @@ tests:
     command: dotnet workload list
   - type: command
     command: dotnet workload install wasm-tools --skip-manifest-update
-    timeout: 600
+    timeout: 900
+    assert_output_contains:
+    - Successfully installed workload(s) wasm-tools
   - type: command
     command: dotnet workload install android --skip-manifest-update
-    timeout: 600
+    timeout: 900
+    assert_output_contains:
+    - Successfully installed workload(s) android
   - type: command
     command: dotnet workload list
+    assert_output_contains:
+    - wasm-tools
+    - android
   - type: command
     command: dotnet new blazorwasm -o mywasm
   - type: command
     command: cd mywasm
   - type: command
     command: dotnet publish -o 1p0
-    timeout: 300
+    timeout: 600
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-ChildItem
+      -Filter *.csproj | Select-Object -First 1; if (-not $p) { Write-Error 'No
+      .csproj found in the current folder'; exit 1 }; $t = Get-Content -LiteralPath
+      $p.FullName -Raw; if ($t -notmatch '<RunAOTCompilation>') { $ins = '
+      <RunAOTCompilation>true</RunAOTCompilation>' + [Environment]::NewLine + '
+      </PropertyGroup>'; $rx = [regex]'</PropertyGroup>'; $t = $rx.Replace($t, $ins,
+      1); Set-Content -LiteralPath $p.FullName -Value $t -NoNewline -Encoding UTF8
+      }; Get-Content -LiteralPath $p.FullName | ForEach-Object { Write-Host $_ }; if
+      ((Get-Content -LiteralPath $p.FullName -Raw) -notmatch
+      '<RunAOTCompilation>true</RunAOTCompilation>') { Write-Error 'Failed to enable
+      RunAOTCompilation'; exit 1 }; Write-Host ('PASS: RunAOTCompilation enabled in
+      ' + $p.Name); exit 0"
+    assert_output_contains:
+    - 'PASS: RunAOTCompilation enabled in'
+  - type: command
+    command: dotnet publish -o 2p0
+    timeout: 1800
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$a = Get-ChildItem
+      -LiteralPath '1p0' -Recurse -File | Measure-Object -Property Length -Sum; $b =
+      Get-ChildItem -LiteralPath '2p0' -Recurse -File | Measure-Object -Property
+      Length -Sum; Write-Host ('1p0 (no AOT): ' + $a.Count + ' files, ' + $a.Sum + '
+      bytes'); Write-Host ('2p0 (AOT): ' + $b.Count + ' files, ' + $b.Sum + '
+      bytes'); if ($b.Sum -le $a.Sum) { Write-Error 'The AOT publish output (2p0) is
+      not larger than the default publish output (1p0)'; exit 1 }; Write-Host 'PASS:
+      AOT publish output (2p0) is larger than the default publish output (1p0)';
+      exit 0"
+    assert_output_contains:
+    - 'PASS: AOT publish output (2p0) is larger'
+  - type: screenshot
+    label: monoaotcompiler-sdk-before
+    delay: 5
+    folder_ps: >-
+      $r = $env:DOTNET_ROOT; if (-not $r) { $r = 'C:\Program Files\dotnet' };
+      Get-ChildItem (Join-Path $r
+      'packs\Microsoft.NET.Runtime.MonoAOTCompiler.Task') -Directory
+      -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'Sdk' }
+      | Where-Object { Test-Path $_ } | Select-Object -Last 1
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$r = $env:DOTNET_ROOT;
+      if (-not $r) { $r = 'C:\Program Files\dotnet' }; $sdk = Get-ChildItem
+      (Join-Path $r 'packs\Microsoft.NET.Runtime.MonoAOTCompiler.Task') -Directory
+      -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'Sdk' }
+      | Where-Object { Test-Path $_ } | Select-Object -Last 1; if (-not $sdk) {
+      Write-Error 'MonoAOTCompiler.Task Sdk folder not found - is the wasm-tools
+      workload installed?'; exit 1 }; Write-Host ('Sdk folder: ' + $sdk);
+      Get-ChildItem -LiteralPath $sdk -Force | ForEach-Object { Write-Host (' before:
+      ' + $_.Name) }; Get-ChildItem -LiteralPath $sdk -Force | Remove-Item -Recurse
+      -Force -ErrorAction Stop; if (@(Get-ChildItem -LiteralPath $sdk -Force).Count
+      -ne 0) { Write-Error 'Sdk folder still has files after deletion'; exit 1 };
+      Write-Host 'PASS: Sdk folder emptied - the workload pack is now damaged'; exit
+      0"
+    assert_output_contains:
+    - 'PASS: Sdk folder emptied'
+  - type: screenshot
+    label: monoaotcompiler-sdk-emptied
+    delay: 5
+    folder_ps: >-
+      $r = $env:DOTNET_ROOT; if (-not $r) { $r = 'C:\Program Files\dotnet' };
+      Get-ChildItem (Join-Path $r
+      'packs\Microsoft.NET.Runtime.MonoAOTCompiler.Task') -Directory
+      -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'Sdk' }
+      | Where-Object { Test-Path $_ } | Select-Object -Last 1
   - type: command
     command: dotnet workload repair
-    timeout: 300
+    timeout: 1800
+    assert_output_contains:
+    - 'Successfully repaired workloads'
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$r = $env:DOTNET_ROOT;
+      if (-not $r) { $r = 'C:\Program Files\dotnet' }; $sdk = Get-ChildItem
+      (Join-Path $r 'packs\Microsoft.NET.Runtime.MonoAOTCompiler.Task') -Directory
+      -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'Sdk' }
+      | Where-Object { Test-Path $_ } | Select-Object -Last 1; if (-not $sdk) {
+      Write-Error 'MonoAOTCompiler.Task Sdk folder not found'; exit 1 };
+      Get-ChildItem -LiteralPath $sdk -Force | ForEach-Object { Write-Host (' after:
+      ' + $_.Name + ' (' + $_.Length + ' bytes)') }; if (-not (Test-Path -LiteralPath
+      (Join-Path $sdk 'Sdk.props'))) { Write-Error ('dotnet workload repair did not
+      restore Sdk.props under ' + $sdk); exit 1 }; Write-Host 'PASS: dotnet workload
+      repair restored the MonoAOTCompiler.Task Sdk pack'; exit 0"
+    assert_output_contains:
+    - 'PASS: dotnet workload repair restored'
   - type: command
     command: dotnet workload uninstall wasm-tools
-    timeout: 300
+    timeout: 600
+    assert_output_contains:
+    - 'Successfully uninstalled workload(s): wasm-tools'
   - type: command
     command: dotnet workload uninstall android
-    timeout: 300
+    timeout: 600
+    assert_output_contains:
+    - 'Successfully uninstalled workload(s): android'
   - type: command
     command: dotnet workload list
   sort_order: 23
+- id: workloads-scenario-3-uninstall-sdk
+  category: Workloads
+  title: 'Workload Scenario 3: manifest update, then uninstall the SDK'
+  description: >-
+    Install wasm-tools and android *without* --skip-manifest-update so the workload
+    manifests are updated, confirm the new workload version in "dotnet workload
+    list", then uninstall the .NET SDK and confirm the dotnet command is gone.
+    WARNING: the last steps remove the SDK from this machine - run this case last,
+    on a VM you can re-image.
+  machine_mutating: true
+  steps:
+  - type: command
+    command: dotnet --info
+  - type: command
+    command: dotnet workload list
+  - type: command
+    command: dotnet workload install wasm-tools
+    timeout: 900
+    assert_output_contains:
+    - Successfully installed workload(s) wasm-tools
+  - type: command
+    command: dotnet workload install android
+    timeout: 900
+    assert_output_contains:
+    - Successfully installed workload(s) android
+  - type: command
+    command: dotnet workload list
+    assert_output_contains:
+    - wasm-tools
+    - android
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$keys =
+      @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+      'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'); $e
+      = @(Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object {
+      $_.DisplayName -like 'Microsoft .NET SDK*' -and $_.UninstallString }); if
+      ($e.Count -eq 0) { Write-Error 'No Microsoft .NET SDK entry found in the
+      uninstall registry'; exit 1 }; $q = [char]34; foreach ($i in $e) { Write-Host
+      ('Uninstalling: ' + $i.DisplayName); $s = $i.UninstallString; if
+      ($s.StartsWith($q)) { $j = $s.IndexOf($q, 1); $exe = $s.Substring(1, $j - 1) }
+      else { $j = $s.ToLower().IndexOf('.exe'); $exe = $s.Substring(0, $j + 4) }; if
+      (-not (Test-Path -LiteralPath $exe)) { Write-Error ('Uninstaller not found: ' +
+      $exe); exit 1 }; Write-Host (' bundle: ' + $exe); $pr = Start-Process -FilePath
+      $exe -ArgumentList '/uninstall','/passive','/norestart' -Wait -PassThru;
+      Write-Host (' exit code: ' + $pr.ExitCode); if ($pr.ExitCode -ne 0 -and
+      $pr.ExitCode -ne 3010) { Write-Error ('Uninstall failed with exit code ' +
+      $pr.ExitCode); exit 1 } }; Write-Host 'PASS: .NET SDK uninstall completed';
+      exit 0"
+    timeout: 1800
+    assert_output_contains:
+    - 'PASS: .NET SDK uninstall completed'
+  - type: command
+    command: dotnet --info
+    expected_exit_code:
+    - 1
+    - 9009
+    continue_on_error: true
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$c = Get-Command dotnet
+      -ErrorAction SilentlyContinue; if (-not $c) { Write-Host 'PASS: dotnet SDK
+      removed - dotnet is no longer recognized'; exit 0 }; Write-Host ('dotnet is
+      still on PATH: ' + $c.Source); $sdks = @(& $c.Source --list-sdks); if
+      ($sdks.Count -gt 0) { Write-Error ('SDKs are still installed: ' + ($sdks -join
+      '; ')); exit 1 }; Write-Host 'PASS: dotnet SDK removed - no SDKs remain (a
+      runtime/host is still installed)'; exit 0"
+    assert_output_contains:
+    - 'PASS: dotnet SDK removed'
+  sort_order: 31

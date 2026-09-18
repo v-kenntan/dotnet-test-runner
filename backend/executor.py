@@ -1050,6 +1050,28 @@ class TestExecutor:
             "environment": env_info,
         })
 
+        # Continuous chains (issue #49). Tests marked `continuous` that run
+        # back-to-back form one chain: they share a single working directory so
+        # state carries over (e.g. the global.json written by the pin test), and
+        # if one fails the rest of the chain is skipped rather than executed
+        # against a half-updated machine. Each test still starts at the chain
+        # root, so a `cd` inside one test never silently moves the next one.
+        chain = None
+
+        def close_chain():
+            """Finish the current chain, reclaiming its shared directory."""
+            nonlocal chain
+            if not chain:
+                return
+            if chain["failed"] and not cancel_flag.is_set():
+                self._emit_event(run_id, {
+                    "type": "step_output", "result_id": None, "step_index": -1,
+                    "line": f"[info] Continuous working directory kept for debugging: {chain['dir']}",
+                })
+            else:
+                _rmtree(chain["dir"])
+            chain = None
+
         for test in tests:
             if cancel_flag.is_set():
                 skipped += 1
@@ -1058,6 +1080,12 @@ class TestExecutor:
             test_case_id = test["id"]
             result_id = str(uuid.uuid4())[:12]
             steps = json.loads(test["steps"]) if isinstance(test["steps"], str) else test["steps"]
+            continuous = bool(test.get("is_continuous"))
+
+            if not continuous:
+                close_chain()
+            elif chain is None:
+                chain = {"dir": tempfile.mkdtemp(prefix="dotnet_test_"), "failed": False}
 
             conn.execute(
                 "INSERT INTO test_results (id, run_id, test_case_id, status, started_at) VALUES (?, ?, ?, ?, ?)",
@@ -1071,6 +1099,30 @@ class TestExecutor:
                 "title": test["title"],
                 "result_id": result_id,
             })
+
+            # An earlier test in this chain failed: the machine state the rest
+            # depends on was never reached, so skip them instead of reporting
+            # cascading failures.
+            if chain and chain["failed"]:
+                msg = "[skip] Earlier test in this continuous sequence failed."
+                self._emit_event(run_id, {
+                    "type": "step_output", "result_id": result_id, "step_index": -1,
+                    "line": msg,
+                })
+                self._queue_console_cmd(run_id, f"echo {msg}")
+                conn.execute(
+                    "UPDATE test_results SET status=?, finished_at=? WHERE id=?",
+                    ("skipped", datetime.now().isoformat(), result_id),
+                )
+                conn.commit()
+                skipped += 1
+                self._emit_event(run_id, {
+                    "type": "test_end",
+                    "test_case_id": test_case_id,
+                    "result_id": result_id,
+                    "status": "skipped",
+                })
+                continue
 
             # Send test header to console with spacing
             title = test["title"]
@@ -1107,8 +1159,12 @@ class TestExecutor:
                 self._runs[run_id]["_active_sdk_path"] = run_level_root
                 self._runs[run_id]["_active_sdk_version"] = run_level_version
 
+            # The workload set version this test pins via {workload_version}.
+            self._runs[run_id]["_workload_version"] = test.get("workload_version") or ""
+
             test_passed, test_warned = self._execute_test(
-                run_id, result_id, steps, cancel_flag, conn, test.get("title") or test_case_id
+                run_id, result_id, steps, cancel_flag, conn, test.get("title") or test_case_id,
+                shared_dir=chain["dir"] if chain else None,
             )
 
             if cancel_flag.is_set():
@@ -1124,6 +1180,9 @@ class TestExecutor:
                 status = "failed"
                 failed += 1
 
+            if chain and status == "failed":
+                chain["failed"] = True
+
             conn.execute(
                 "UPDATE test_results SET status=?, finished_at=? WHERE id=?",
                 (status, datetime.now().isoformat(), result_id),
@@ -1136,6 +1195,8 @@ class TestExecutor:
                 "result_id": result_id,
                 "status": status,
             })
+
+        close_chain()
 
         # Finalize run
         final_status = "completed" if not cancel_flag.is_set() else "cancelled"
@@ -1164,7 +1225,8 @@ class TestExecutor:
 
     def _execute_test(
         self, run_id: str, result_id: str, steps: List[dict],
-        cancel_flag: threading.Event, conn: sqlite3.Connection, test_name: str = ""
+        cancel_flag: threading.Event, conn: sqlite3.Connection, test_name: str = "",
+        shared_dir: str = None
     ) -> tuple:
         """Run one test case in a temp working directory, then clean it up.
 
@@ -1172,15 +1234,23 @@ class TestExecutor:
         when the test fails so the build output can be inspected, and the path
         is surfaced in the run log; the startup sweep reclaims it later. A
         cancelled test keeps nothing, since its directory is usually empty.
+
+        shared_dir, when given, is a continuous chain's working directory: it is
+        reused by every test in the chain and owned by the caller, so this test
+        neither creates nor removes it.
         """
-        work_dir = tempfile.mkdtemp(prefix="dotnet_test_")
+        work_dir = shared_dir or tempfile.mkdtemp(prefix="dotnet_test_")
         try:
             all_passed, had_warnings = self._execute_test_steps(
                 run_id, result_id, steps, cancel_flag, conn, test_name, work_dir
             )
         except BaseException:
-            _rmtree(work_dir)
+            if not shared_dir:
+                _rmtree(work_dir)
             raise
+
+        if shared_dir:
+            return (all_passed, had_warnings)
 
         if all_passed or cancel_flag.is_set():
             _rmtree(work_dir)
@@ -1217,6 +1287,38 @@ class TestExecutor:
         tfm = f"net{sdk_version.split('.')[0]}.0" if sdk_version else "net10.0"
         # {rid} tracks the machine/SDK architecture (win-x64, win-arm64, ...).
         rid = run.get("_rid") or _host_rid()
+        # {workload_version} is the workload set version the tester picked for this
+        # test in the editor (issue #49). The available versions only exist on the
+        # workloads feed, so the value cannot be derived — it must be supplied.
+        workload_version = (run.get("_workload_version") or "").strip()
+
+        def expand(text: str) -> str:
+            return (text.replace("{tfm}", tfm).replace("{rid}", rid)
+                        .replace("{assets}", ASSETS_DIR)
+                        .replace("{workload_version}", workload_version))
+
+        # Fail fast when a step needs a workload set version that was never set:
+        # substituting an empty string would run e.g. `dotnet workload update
+        # --version ` and fail with an unrelated CLI parse error.
+        if not workload_version and any(
+            "{workload_version}" in json.dumps(step) for step in steps
+        ):
+            msg = ("[error] This test needs a workload set version. Open it in the "
+                   "editor, set \"Workload set version\" (e.g. from `dotnet workload "
+                   "search version`), then run it again.")
+            self._emit_event(run_id, {
+                "type": "step_output", "result_id": result_id, "step_index": -1,
+                "line": msg,
+            })
+            conn.execute(
+                """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, status, duration_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (str(uuid.uuid4())[:12], result_id, 0, "command",
+                 "workload set version required", -1, msg, "failed", 0),
+            )
+            conn.commit()
+            return (False, had_warnings)
+
         if sdk_version:
             global_json = os.path.join(work_dir, "global.json")
             with open(global_json, "w") as f:
@@ -1232,7 +1334,7 @@ class TestExecutor:
             expected_exit = step.get("expected_exit_code", 0)
 
             if step_type == "command":
-                cmd = step["command"].replace("{tfm}", tfm).replace("{rid}", rid).replace("{assets}", ASSETS_DIR)
+                cmd = expand(step["command"])
                 # Handle cd commands by updating current_dir
                 if cmd.strip().startswith("cd "):
                     prev_dir = current_dir
@@ -1356,10 +1458,11 @@ class TestExecutor:
                 else:
                     step_passed = exit_code == expected_exit
 
-                # Check output assertions if any
+                # Check output assertions if any (placeholders expand here too, so
+                # a step can assert on the version it was told to install)
                 if step_passed and "assert_output_contains" in step:
                     for pattern in step["assert_output_contains"]:
-                        if pattern not in stdout_text:
+                        if expand(pattern) not in stdout_text:
                             step_passed = False
                             break
 
@@ -1478,7 +1581,7 @@ class TestExecutor:
             elif step_type == "write_file":
                 filepath = os.path.join(current_dir, step["path"])
                 os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                content = step["content"].replace("{tfm}", tfm).replace("{rid}", rid).replace("{assets}", ASSETS_DIR)
+                content = expand(step["content"])
 
                 start_time = time.time()
 

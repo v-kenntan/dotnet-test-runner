@@ -43,7 +43,19 @@ A test can capture a screenshot as evidence using a `screenshot` step (Windows o
   # folder: 'C:\Program Files\dotnet\metadata\workloads'
 ```
 
-Screenshots are saved under `screenshots/<run_id>/` next to the app's database and can be browsed in the **Screenshots** tab of a run's detail view. **Workload Scenario 1** uses this to capture the `installertype` folder (per issue #47).
+Screenshots are saved under `screenshots/<run_id>/` next to the app's database and can be browsed in the **Screenshots** tab of a run's detail view. **Workload Scenario 1** uses this to capture the `installertype` folder (per issue #47), and **Workload Scenario 2** captures the `Microsoft.NET.Runtime.MonoAOTCompiler.Task\<version>\Sdk` pack folder before and after it is emptied.
+
+## Workload scenarios
+
+The **Workloads** category mirrors the "Test cases for Workloads" plan:
+
+- **Scenario 1** — inspect `dotnet workload info` / `list` / `search` and verify the MSI `installertype` marker is a 0 KB file.
+- **Scenario 2** — install `wasm-tools` and `android` with `--skip-manifest-update`, publish a Blazor WASM app twice (`-o 1p0` without AOT, then `-o 2p0` with `<RunAOTCompilation>true</RunAOTCompilation>`) and assert the AOT output is larger, then delete the contents of the `MonoAOTCompiler.Task` `Sdk` pack folder, restore it with `dotnet workload repair`, and uninstall both workloads.
+- **Scenario 3** — install the same two workloads **without** `--skip-manifest-update` so the manifests are updated, then uninstall the .NET SDK and assert `dotnet` is no longer available.
+
+> **Scenario 3 removes the .NET SDK from the machine.** It is ordered last so that a "run everything" pass does not break the tests behind it, and every later test would fail until the SDK is reinstalled. Run it on a VM you can re-image.
+
+Scenarios 2 and 3 install MSI workloads and (for Scenario 3) run the SDK uninstall bundle, so the runner must be started elevated.
 
 ## HTTPS development certificate
 
@@ -56,6 +68,27 @@ To avoid that, the runner checks the certificate **before** starting a run that 
 - **Cancel run** — nothing is executed
 
 Runs without HTTPS tests skip the check entirely.
+
+## Workload sets: selecting the version
+
+Most Workload Set cases act on a **specific workload set version** (`dotnet workload update --version <version>`, `dotnet workload install maui --version <version>`, or a `workloadVersion` pinned in `global.json`). Those versions only exist on the workloads feed, so the runner cannot derive one — you pick it:
+
+1. Run **Update to latest workload set**, or any test containing `dotnet workload search version`, and note a version from the output.
+2. Open the test you want in the editor and fill in **Workload set version** (e.g. `8.0.400`).
+3. Run it. Every `{workload_version}` in that test's steps expands to what you entered.
+
+The field is per test, so **Update workload sets from different band** can hold a version from another feature band (`8.0.3xx` on an `8.0.4xx` SDK, `9.0.2xx` on `9.0.3xx`, `10.0.1xx` on `10.0.2xx`) while the others hold the current band's.
+
+If a step uses `{workload_version}` and the field is blank, the test fails immediately with a message saying so, rather than running `--version` with an empty value. Versions you enter are kept when the app restarts — the YAML re-seed does not overwrite them.
+
+## Continuous test cases
+
+Tests marked `continuous: true` in YAML (all **Workload Sets** cases) are executed as one sequence instead of in isolation:
+
+- **Shared working directory** — consecutive continuous tests reuse one temp folder, so files from an earlier test (e.g. the `global.json` written by the pin test) are still there for a later one. Each test still starts at the folder's root, so a `cd` inside one test never moves the next.
+- **Stops on failure** — if one fails, the remaining tests in the sequence are reported **Skipped** rather than run against a half-updated machine. The shared folder is kept for debugging, and its path is logged.
+
+A non-continuous test ends the sequence; the next continuous test starts a fresh one. Continuous tests show a ⛓ badge in the test list.
 
 ## Usage
 
@@ -72,7 +105,7 @@ Each test reports one of these outcomes:
 - **Passed** ✓ — all steps succeeded with no warnings
 - **Passed with warnings** ⚠ — all steps succeeded but the output contained an MSBuild/NuGet-style warning (e.g. `warning NU1903:` for a package with a known vulnerability). Counted separately from clean passes.
 - **Failed** ✗ — a step returned an unexpected exit code or failed an output assertion
-- **Skipped** — the test was cancelled before it ran
+- **Skipped** — the test was cancelled before it ran, or an earlier test in its continuous sequence failed
 
 ### Completion Notification
 
@@ -116,6 +149,8 @@ tests:
     title: "My Test"
     description: "What this tests"
     machine_mutating: false  # true if it modifies global state
+    continuous: false        # true to chain with adjacent continuous tests
+    workload_version: ""     # optional seed for {workload_version}
     steps:
       - type: command
         command: "dotnet new console -o myapp"
@@ -151,6 +186,9 @@ Step `command` and `write_file` `content` support these placeholders:
 | `{tfm}` | Target framework moniker of the SDK the run resolved | `net11.0` |
 | `{rid}` | Runtime identifier reported by `dotnet --info` (falls back to the machine's) | `win-x64`, `win-arm64` |
 | `{assets}` | Path to the bundled read-only `test_assets` folder | — |
+| `{workload_version}` | The test's **Workload set version** field (see below) | `8.0.400` |
+
+Placeholders also expand inside `assert_output_contains`, so a step can assert on the version it was told to install.
 
 `{rid}` is what makes the self-contained publish tests (cases **3** and **16**) work unchanged on both x64 and ARM64 VMs: `dotnet publish -r {rid} --sc` publishes `win-arm64` on an ARM64 machine and `win-x64` on an x64 one, and `cd bin\Release\{tfm}\{rid}\publish` follows the output there.
 

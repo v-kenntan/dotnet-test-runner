@@ -32,6 +32,8 @@ export default function TestList({ categories, selectedIds, onToggle, onSelectCa
                   />
                   <span className="test-title">{test.title}</span>
                   {test.is_machine_mutating && <span className="badge badge-warning">⚠️ Machine</span>}
+                  {test.is_continuous && <span className="badge badge-info" title="Runs as one continuous sequence: shares a working directory with the adjacent continuous tests, and is skipped if an earlier one fails">⛓ Continuous</span>}
+                  {test.workload_version && <span className="badge badge-info" title="Workload set version used by this test">🎯 {test.workload_version}</span>}
                 </label>
                 <div className="test-actions">
                   <button className="small-btn" onClick={() => onEdit(test)}>Edit</button>
