@@ -40,6 +40,7 @@ export default function TestRunner({ status, testStatuses, tests, onCancel, onTe
                 {s === 'passed' && '✓'}
                 {s === 'passed_with_warnings' && '⚠'}
                 {s === 'failed' && '✗'}
+                {s === 'skipped' && '⏭'}
                 {s === 'cancelled' && '—'}
               </span>
               <span>{test.title}</span>

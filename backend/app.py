@@ -58,6 +58,8 @@ def init_db():
             is_machine_mutating INTEGER DEFAULT 0,
             sort_order INTEGER DEFAULT 999,
             sdk_path TEXT,
+            workload_version TEXT,
+            is_continuous INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         );
@@ -110,6 +112,16 @@ def init_db():
         conn.execute("ALTER TABLE test_cases ADD COLUMN sdk_path TEXT")
     except sqlite3.OperationalError:
         pass  # Column already exists
+    # Migrate: add the workload set version a test pins via {workload_version}
+    try:
+        conn.execute("ALTER TABLE test_cases ADD COLUMN workload_version TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    # Migrate: add the continuous-chain flag (Workload Sets run as one sequence)
+    try:
+        conn.execute("ALTER TABLE test_cases ADD COLUMN is_continuous INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.commit()
     conn.close()
 
@@ -147,10 +159,14 @@ def load_builtin_definitions():
                 # built-in tests (renames, new steps, re-ordering) reach
                 # existing DBs too. Only built-ins are yaml-owned; user
                 # created tests (is_builtin = 0) are left untouched.
+                # workload_version is deliberately NOT refreshed: the tester
+                # types it in the editor before a run, so re-seeding it on every
+                # startup would wipe the version they just selected.
                 conn.execute(
                     """UPDATE test_cases
                           SET category = ?, title = ?, description = ?, steps = ?,
-                              is_machine_mutating = ?, sort_order = ?, sdk_path = ?
+                              is_machine_mutating = ?, sort_order = ?, sdk_path = ?,
+                              is_continuous = ?
                         WHERE id = ? AND is_builtin = 1""",
                     (
                         test.get("category", "General"),
@@ -160,13 +176,14 @@ def load_builtin_definitions():
                         1 if test.get("machine_mutating", False) else 0,
                         test.get("sort_order", 999),
                         (test.get("sdk_path") or None),
+                        1 if test.get("continuous", False) else 0,
                         test_id,
                     ),
                 )
                 continue
             conn.execute(
-                """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+                """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path, workload_version, is_continuous)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)""",
                 (
                     test_id,
                     test.get("category", "General"),
@@ -176,6 +193,8 @@ def load_builtin_definitions():
                     1 if test.get("machine_mutating", False) else 0,
                     test.get("sort_order", 999),
                     (test.get("sdk_path") or None),
+                    (test.get("workload_version") or None),
+                    1 if test.get("continuous", False) else 0,
                 ),
             )
     # Prune built-ins whose YAML definition has been removed, so deleting a
@@ -217,6 +236,8 @@ def list_tests():
             "is_machine_mutating": bool(row["is_machine_mutating"]),
             "sort_order": row["sort_order"],
             "sdk_path": row["sdk_path"],
+            "workload_version": row["workload_version"],
+            "is_continuous": bool(row["is_continuous"]),
         })
     return jsonify(tests)
 
@@ -227,8 +248,8 @@ def create_test():
     test_id = data.get("id", str(uuid.uuid4())[:8])
     conn = get_db()
     conn.execute(
-        """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sdk_path)
-           VALUES (?, ?, ?, ?, ?, 0, ?, ?)""",
+        """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sdk_path, workload_version, is_continuous)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
         (
             test_id,
             data["category"],
@@ -237,6 +258,8 @@ def create_test():
             json.dumps(data["steps"]),
             1 if data.get("is_machine_mutating", False) else 0,
             (data.get("sdk_path") or "").strip() or None,
+            (data.get("workload_version") or "").strip() or None,
+            1 if data.get("is_continuous", False) else 0,
         ),
     )
     conn.commit()
@@ -250,7 +273,8 @@ def update_test(test_id):
     conn = get_db()
     conn.execute(
         """UPDATE test_cases SET category=?, title=?, description=?, steps=?,
-           is_machine_mutating=?, sdk_path=?, updated_at=datetime('now')
+           is_machine_mutating=?, sdk_path=?, workload_version=?, is_continuous=?,
+           updated_at=datetime('now')
            WHERE id=?""",
         (
             data["category"],
@@ -259,6 +283,8 @@ def update_test(test_id):
             json.dumps(data["steps"]),
             1 if data.get("is_machine_mutating", False) else 0,
             (data.get("sdk_path") or "").strip() or None,
+            (data.get("workload_version") or "").strip() or None,
+            1 if data.get("is_continuous", False) else 0,
             test_id,
         ),
     )

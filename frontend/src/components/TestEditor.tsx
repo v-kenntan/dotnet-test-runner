@@ -13,6 +13,7 @@ export default function TestEditor({ test, onSave, onCancel }: Props) {
   const [description, setDescription] = useState(test?.description || '');
   const [machineMutating, setMachineMutating] = useState(test?.is_machine_mutating || false);
   const [sdkPath, setSdkPath] = useState(test?.sdk_path || '');
+  const [workloadVersion, setWorkloadVersion] = useState(test?.workload_version || '');
   const [stepsText, setStepsText] = useState(
     test ? JSON.stringify(test.steps, null, 2) : JSON.stringify([{ type: 'command', command: 'dotnet --info' }], null, 2)
   );
@@ -21,6 +22,8 @@ export default function TestEditor({ test, onSave, onCancel }: Props) {
 
   const toKebabCase = (s: string) =>
     s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  const needsWorkloadVersion = stepsText.includes('{workload_version}');
 
   const handleBrowseSdkFolder = async () => {
     const res = await pickFolder();
@@ -51,7 +54,13 @@ export default function TestEditor({ test, onSave, onCancel }: Props) {
     }
 
     const id = test ? test.id : toKebabCase(title);
-    const payload = { id, category: category.trim(), title: title.trim(), description, steps, is_machine_mutating: machineMutating, sdk_path: sdkPath.trim() || null };
+    const payload = {
+      id, category: category.trim(), title: title.trim(), description, steps,
+      is_machine_mutating: machineMutating,
+      sdk_path: sdkPath.trim() || null,
+      workload_version: workloadVersion.trim() || null,
+      is_continuous: test?.is_continuous ?? false,
+    };
 
     try {
       if (test) {
@@ -111,6 +120,27 @@ export default function TestEditor({ test, onSave, onCancel }: Props) {
       </div>
 
       <div className="form-group">
+        <label>
+          Workload set version {needsWorkloadVersion && <span className="required">*</span>}
+        </label>
+        <input
+          value={workloadVersion}
+          onChange={e => setWorkloadVersion(e.target.value)}
+          placeholder="e.g. 8.0.400 — leave blank unless a step uses {workload_version}"
+        />
+        <small className="help-text">
+          Substituted for <code>{'{workload_version}'}</code> in this test's steps. Workload
+          set versions are only listed on the workloads feed, so pick one from a
+          <code> dotnet workload search version</code> run and paste it here before running.
+        </small>
+        {needsWorkloadVersion && !workloadVersion.trim() && (
+          <small className="help-text">
+            ⚠️ This test's steps use <code>{'{workload_version}'}</code>, so it will fail until a version is set.
+          </small>
+        )}
+      </div>
+
+      <div className="form-group">
         <label>Steps (JSON)</label>
         <textarea className="code-textarea" value={stepsText} onChange={e => setStepsText(e.target.value)} rows={20} />
       </div>
@@ -154,6 +184,20 @@ export default function TestEditor({ test, onSave, onCancel }: Props) {
               </tbody>
             </table>
 
+            <h4>Placeholders</h4>
+            <p>Usable in <code>command</code>, <code>write_file</code> <code>content</code>, and <code>assert_output_contains</code>.</p>
+            <table className="help-table">
+              <thead>
+                <tr><th>Placeholder</th><th>Expands to</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>{'{tfm}'}</code></td><td>Target framework moniker of the selected SDK (e.g. <code>net10.0</code>)</td></tr>
+                <tr><td><code>{'{rid}'}</code></td><td>Runtime identifier (e.g. <code>win-x64</code>, <code>win-arm64</code>)</td></tr>
+                <tr><td><code>{'{assets}'}</code></td><td>Path to the bundled read-only test assets folder</td></tr>
+                <tr><td><code>{'{workload_version}'}</code></td><td>The "Workload set version" field above. The test fails up front if a step needs it and it is blank.</td></tr>
+              </tbody>
+            </table>
+
             <h4>Special Commands</h4>
             <ul>
               <li><code>cd &lt;directory&gt;</code> — Changes the working directory for subsequent steps (relative or absolute path)</li>
@@ -185,7 +229,7 @@ export default function TestEditor({ test, onSave, onCancel }: Props) {
 
             <h4>Notes</h4>
             <ul>
-              <li>Each test runs in an isolated temp directory</li>
+              <li>Each test runs in an isolated temp directory, unless it is part of a continuous sequence (those share one directory, and are skipped once an earlier test in the sequence fails)</li>
               <li>If an SDK version is selected, a <code>global.json</code> is placed in the working directory to pin it</li>
               <li>Steps execute sequentially; execution stops at the first failure unless <code>continue_on_error</code> is set</li>
               <li>Use <code>expected_exit_code</code> as an array to accept multiple valid codes (e.g., <code>[0, 1]</code>)</li>

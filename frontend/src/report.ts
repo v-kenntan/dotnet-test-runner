@@ -45,7 +45,13 @@ export function stripAnsi(str: string): string {
 }
 
 export function resultLine(status: string): string {
-  return `  ${status === 'passed' ? '✅ PASSED' : status === 'passed_with_warnings' ? '⚠️ PASSED (warnings)' : '❌ FAILED'}`;
+  switch (status) {
+    case 'passed': return '  ✅ PASSED';
+    case 'passed_with_warnings': return '  ⚠️ PASSED (warnings)';
+    case 'skipped': return '  ⏭️ SKIPPED';
+    case 'cancelled': return '  🚫 CANCELLED';
+    default: return '  ❌ FAILED';
+  }
 }
 
 /** Rebuild the run log from the persisted step results of a finished run. */
@@ -80,6 +86,7 @@ function mdIcon(status: string): string {
     case 'passed': return '✅';
     case 'passed_with_warnings': return '⚠️';
     case 'failed': return '❌';
+    case 'skipped': return '⏭️';
     case 'cancelled': return '⚠️';
     default: return '○';
   }

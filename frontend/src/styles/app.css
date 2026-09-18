@@ -258,6 +258,13 @@ body {
   color: #000;
 }
 
+.badge-info {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: normal;
+  margin-left: 0.25rem;
+}
+
 .badge-completed {
   background: var(--success);
 }
@@ -350,6 +357,10 @@ body {
 
 .status-failed .status-icon {
   color: var(--error);
+}
+
+.status-skipped .status-icon {
+  color: var(--text-muted);
 }
 
 /* Log Viewer */
