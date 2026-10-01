@@ -2,10 +2,24 @@ tests:
 - id: cs-01-dotnet-info
   category: C# Basic
   title: 1. Check dotnet info
-  description: Verify dotnet SDK is installed and show version info
+  description: Verify dotnet SDK is installed and show version info, then capture the
+    installed .NET apps in Settings and the SDK folders in File Explorer as additional
+    checkpoints
   steps:
   - type: command
     command: dotnet --info
+  - type: screenshot
+    label: settings-installed-apps
+    settings_uri: ms-settings:appsfeatures
+    search: .net
+    delay: 6
+  - type: screenshot
+    label: sdk-folder
+    folder_ps: >-
+      if ($env:DOTNET_ROOT) { $r = $env:DOTNET_ROOT }
+      else { $r = Split-Path (Get-Command dotnet.exe).Source }
+      Join-Path $r 'sdk'
+    delay: 4
   sort_order: 1
 - id: cs-02-console-build-run-publish
   category: C# Basic

@@ -2,7 +2,7 @@ tests:
 - id: nonnative-sdk-x86-basic
   category: Non-native SDK
   title: Non-native SDK tests (x86 on x64, etc.)
-  description: Exercise console, desktop, and test templates under a non-native SDK scenario
+  description: Exercise console, desktop, and test templates under a non-native SDK scenario. The WPF and WinForms windows are run and captured (each auto-closes after 10s), and the xUnit/NUnit/MSTest sources are captured in Notepad.
   steps:
   - type: command
     command: dotnet --info
@@ -23,6 +23,10 @@ tests:
   - type: command
     command: dotnet build
   - type: command
+    command: dotnet run
+    run_timeout: 10
+    screenshot: true
+  - type: command
     command: cd ..
   - type: command
     command: dotnet new winforms -o mywinforms
@@ -31,6 +35,10 @@ tests:
   - type: command
     command: dotnet build
   - type: command
+    command: dotnet run
+    run_timeout: 10
+    screenshot: true
+  - type: command
     command: cd ..
   - type: command
     command: dotnet new xunit -o Myxunit
@@ -38,6 +46,8 @@ tests:
     command: cd Myxunit
   - type: write_file
     path: UnitTest1.cs
+    screenshot: true
+    label: xunit-UnitTest1
     content: |
       namespace Myxunit;
 
@@ -74,6 +84,8 @@ tests:
     command: cd Myunit
   - type: write_file
     path: UnitTest1.cs
+    screenshot: true
+    label: nunit-UnitTest1
     content: |
       namespace Mynunit
       {
@@ -117,6 +129,8 @@ tests:
     command: cd Mymstest
   - type: write_file
     path: Test1.cs
+    screenshot: true
+    label: mstest-Test1
     content: |
       namespace Mymstest;
 

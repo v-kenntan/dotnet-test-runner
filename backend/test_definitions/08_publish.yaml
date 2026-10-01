@@ -2,7 +2,9 @@ tests:
 - id: publish-15-framework-dependent
   category: Publish
   title: 15. Framework-dependent publish
-  description: Create a console app, build it, run it, and publish it for the selected .NET SDK
+  description: Create a console app, build it, run it, publish it for the selected
+    .NET SDK, then run both the published .dll and .exe to verify they exist and
+    execute successfully
   steps:
   - type: command
     command: dotnet new console -o f3
@@ -13,7 +15,15 @@ tests:
   - type: command
     command: dotnet run
   - type: command
-    command: dotnet publish -f {tfm}
+    command: dotnet publish -f {tfm} -o pub
+  - type: command
+    command: cd pub
+  - type: command
+    command: dotnet f3.dll
+    assert_output_contains: ["Hello, World!"]
+  - type: command
+    command: f3.exe
+    assert_output_contains: ["Hello, World!"]
   sort_order: 17
 - id: publish-16-self-contained
   category: Publish

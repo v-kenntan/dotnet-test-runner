@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { TestRun, fetchScreenshots, RunScreenshot } from '../api';
+import { TestRun, fetchScreenshots, RunScreenshot, exportRun, ExportResult } from '../api';
 import {
   Summary, statusIcon, formatTime, generateMarkdown, downloadMarkdown, reconstructLogs,
 } from '../report';
@@ -34,6 +34,8 @@ export default function RunDetail({ run, results, tests, onBack }: RunDetailProp
   const logViewerRef = useRef<LogViewerHandle>(null);
   const [screenshots, setScreenshots] = useState<RunScreenshot[] | null>(null);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<ExportResult | null>(null);
 
   const loadLogs = useCallback(async (): Promise<string[]> => {
     if (logs !== null) return logs;
@@ -83,13 +85,43 @@ export default function RunDetail({ run, results, tests, onBack }: RunDetailProp
     await downloadMarkdown(md, `test-run-${run.sdk_version || run.id}-${date}.md`);
   }, [loadLogs, run, results, summary]);
 
+  const handleSaveToResults = useCallback(async () => {
+    setSaving(true);
+    try {
+      setSaved(await exportRun(run.id));
+    } catch (e) {
+      setSaved({ exported: false, reason: String(e) });
+    } finally {
+      setSaving(false);
+    }
+  }, [run.id]);
+
   return (
     <div className="run-detail-view">
       <div className="run-detail-header">
         <button className="back-btn" onClick={onBack}>← Back to Dashboard</button>
         <h2>Run {run.id}</h2>
         <span className={`badge badge-${run.status}`}>{run.status}</span>
+        <button
+          className="export-btn"
+          onClick={handleSaveToResults}
+          disabled={saving}
+          title="Write report, data, screenshots and a DB copy to the results folder"
+        >
+          {saving ? 'Saving…' : '💾 Save to results folder'}
+        </button>
       </div>
+
+      {saved && (
+        <div className={`results-destination ${saved.exported ? 'ok' : 'warn'}`}>
+          <span className="results-destination-icon">{saved.exported ? '✅' : '⚠️'}</span>
+          <span>
+            {saved.exported
+              ? <>Saved to <code>{saved.path}</code>{saved.screenshots ? ` (${saved.screenshots} screenshots)` : ''}</>
+              : <>Save failed: {saved.reason}</>}
+          </span>
+        </div>
+      )}
 
       <div className="run-detail-meta">
         <span>Started: {formatTime(run.started_at)}</span>

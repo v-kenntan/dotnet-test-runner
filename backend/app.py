@@ -12,6 +12,10 @@ import threading
 from flask import Flask, request, jsonify, Response, send_from_directory
 import yaml
 from executor import TestExecutor, sweep_temp_artifacts
+import results_export
+import db_store
+import sdk_source
+import nuget_config
 
 
 def get_base_dir():
@@ -27,21 +31,25 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 app.json.sort_keys = False
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_runner.db")
-if getattr(sys, '_MEIPASS', None):
-    # When bundled, put the DB next to the exe so it persists across runs
-    DB_PATH = os.path.join(os.path.dirname(sys.executable), "test_runner.db")
+DB_PATH = db_store.db_path()
 DEFINITIONS_DIR = os.path.join(BASE_DIR, "test_definitions")
+
+# The app's own folder. Stays local even when the DB is kept in OneDrive: it is
+# the base for the extracted-SDK cache, which is far too big to sync.
+APP_DIR = db_store.default_dir()
 
 # Screenshots captured during runs live next to the DB (persistent), one folder
 # per run: <db_dir>/screenshots/<run_id>/*.png
-SCREENSHOTS_DIR = os.path.join(os.path.dirname(DB_PATH), "screenshots")
+SCREENSHOTS_DIR = db_store.screenshots_dir()
 
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    # The DB may sit in a synced folder, where a sync client can hold the file
+    # for a moment. Wait rather than failing the request outright.
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
@@ -122,6 +130,13 @@ def init_db():
         conn.execute("ALTER TABLE test_cases ADD COLUMN is_continuous INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # Column already exists
+    # Migrate: add the flag marking tests that need an SDK folder pinned before
+    # they are meaningful (the zip-install workload cases), so the test list can
+    # offer the picker inline instead of hiding it in the editor.
+    try:
+        conn.execute("ALTER TABLE test_cases ADD COLUMN requires_sdk_path INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.commit()
     conn.close()
 
@@ -161,12 +176,14 @@ def load_builtin_definitions():
                 # created tests (is_builtin = 0) are left untouched.
                 # workload_version is deliberately NOT refreshed: the tester
                 # types it in the editor before a run, so re-seeding it on every
-                # startup would wipe the version they just selected.
+                # startup would wipe the version they just selected. sdk_path is
+                # excluded for the same reason - it is pinned per machine, not
+                # owned by the yaml.
                 conn.execute(
                     """UPDATE test_cases
                           SET category = ?, title = ?, description = ?, steps = ?,
-                              is_machine_mutating = ?, sort_order = ?, sdk_path = ?,
-                              is_continuous = ?
+                              is_machine_mutating = ?, sort_order = ?,
+                              is_continuous = ?, requires_sdk_path = ?
                         WHERE id = ? AND is_builtin = 1""",
                     (
                         test.get("category", "General"),
@@ -175,15 +192,15 @@ def load_builtin_definitions():
                         json.dumps(test["steps"]),
                         1 if test.get("machine_mutating", False) else 0,
                         test.get("sort_order", 999),
-                        (test.get("sdk_path") or None),
                         1 if test.get("continuous", False) else 0,
+                        1 if test.get("requires_sdk_path", False) else 0,
                         test_id,
                     ),
                 )
                 continue
             conn.execute(
-                """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path, workload_version, is_continuous)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path, workload_version, is_continuous, requires_sdk_path)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)""",
                 (
                     test_id,
                     test.get("category", "General"),
@@ -195,6 +212,7 @@ def load_builtin_definitions():
                     (test.get("sdk_path") or None),
                     (test.get("workload_version") or None),
                     1 if test.get("continuous", False) else 0,
+                    1 if test.get("requires_sdk_path", False) else 0,
                 ),
             )
     # Prune built-ins whose YAML definition has been removed, so deleting a
@@ -238,6 +256,7 @@ def list_tests():
             "sdk_path": row["sdk_path"],
             "workload_version": row["workload_version"],
             "is_continuous": bool(row["is_continuous"]),
+            "requires_sdk_path": bool(row["requires_sdk_path"]),
         })
     return jsonify(tests)
 
@@ -291,6 +310,28 @@ def update_test(test_id):
     conn.commit()
     conn.close()
     return jsonify({"status": "updated"})
+
+
+@app.route("/api/tests/<test_id>/sdk-path", methods=["PUT"])
+def set_test_sdk_path(test_id):
+    """Pin (or clear) one test's SDK folder without rewriting the whole test.
+
+    The test list offers this inline for tests that need a zip SDK, so it must
+    not touch the steps/category the editor owns.
+    """
+    sdk_path = (request.json or {}).get("sdk_path")
+    sdk_path = (sdk_path or "").strip() or None
+    conn = get_db()
+    cur = conn.execute(
+        "UPDATE test_cases SET sdk_path=?, updated_at=datetime('now') WHERE id=?",
+        (sdk_path, test_id),
+    )
+    conn.commit()
+    updated = cur.rowcount
+    conn.close()
+    if not updated:
+        return jsonify({"error": f"Unknown test {test_id}"}), 404
+    return jsonify({"status": "updated", "sdk_path": sdk_path})
 
 
 @app.route("/api/tests/<test_id>", methods=["DELETE"])
@@ -376,6 +417,29 @@ def get_screenshot(run_id, filename):
     if not target.startswith(run_dir + os.sep) or not os.path.isfile(target):
         return jsonify({"error": "Not found"}), 404
     return send_from_directory(run_dir, os.path.basename(target))
+
+
+@app.route("/api/results-destination", methods=["GET"])
+def results_destination():
+    """Where finished runs are exported to, and whether that outlives this VM."""
+    root, source = results_export.resolve_results_root(APP_DIR)
+    return jsonify({
+        "root": root,
+        "source": source,
+        "persistent": results_export.is_persistent(source),
+        "env_var": results_export.ENV_ROOT,
+        "db_path": DB_PATH,
+        "db_source": db_store.db_source(),
+        "db_persistent": results_export.is_persistent(db_store.db_source()),
+        "db_env_var": db_store.ENV_DB,
+    })
+
+
+@app.route("/api/runs/<run_id>/export", methods=["POST"])
+def export_run(run_id):
+    """Re-export a past run to the results folder. Overwrites its own folder."""
+    result = results_export.export_run(run_id, DB_PATH, SCREENSHOTS_DIR)
+    return jsonify(result), (200 if result.get("exported") else 500)
 
 
 @app.route("/api/execute", methods=["POST"])
@@ -465,13 +529,21 @@ def list_sdks():
         output = result.stdout.strip()
         if not output and result.returncode != 0:
             return jsonify({"sdks": [], "error": result.stderr})
+        # Settings-style names ("11.0.100-preview.7.26381.103 (x64)") come from
+        # the installed-apps registry; `dotnet --list-sdks` has no architecture
+        # or install-source information of its own (issue #74).
+        by_version = sdk_source.installed_sdk_labels()
         for line in output.splitlines():
             # Format: "8.0.100 [C:\Program Files\dotnet\sdk]"
             parts = line.split(" [")
             if parts:
                 version = parts[0].strip()
                 path = parts[1].rstrip("]") if len(parts) > 1 else ""
-                sdks.append({"version": version, "path": path})
+                sdks.append({
+                    "version": version,
+                    "path": path,
+                    "label": sdk_source.label_for(version, path, by_version),
+                })
         return jsonify({"sdks": sdks})
     except FileNotFoundError:
         return jsonify({"sdks": [], "error": "dotnet not found in PATH"})
@@ -530,6 +602,56 @@ def trust_dev_certs():
     """
     sdk_path = (request.json or {}).get("sdk_path") or None
     return _dev_certs(["--trust"], sdk_path, timeout=300)
+
+
+@app.route("/api/sdk-path/resolve", methods=["POST"])
+def resolve_sdk_path():
+    """Turn a typed SDK path into an install root the runner can use.
+
+    Accepts an install folder or a ``.zip`` SDK, which is extracted on first use
+    so testers can point straight at a downloaded zip (issue #74). Extraction of
+    a real SDK zip takes a while, hence the generous timeout on the caller side.
+    """
+    raw = (request.json or {}).get("path") or ""
+    root, error = sdk_source.resolve_sdk_root(raw, APP_DIR)
+    if error:
+        return jsonify({"ok": False, "error": error})
+    version = sdk_source.sdk_version(root)
+    if not version:
+        return jsonify({
+            "ok": False,
+            "error": f"dotnet in {root} did not report a version; is it a complete SDK?",
+        })
+    # Zip SDKs are not registered as installed apps, so they get no Settings-style
+    # name; mark the source instead so it is distinguishable in the picker.
+    is_zip = raw.strip().strip('"').strip("'").lower().endswith(".zip")
+    return jsonify({
+        "ok": True,
+        "root": root,
+        "version": version,
+        "label": f"{version} ({'zip' if is_zip else 'folder'})",
+    })
+
+
+@app.route("/api/nuget-config", methods=["GET"])
+def get_nuget_config():
+    """Current user-level NuGet.Config sources and which required feeds are missing.
+
+    Missing feeds make restores fail with NU1102, which surfaces as a failed test
+    rather than a configuration problem, so the app reports them up front (issue #64).
+    """
+    return jsonify(nuget_config.read_state())
+
+
+@app.route("/api/nuget-config/add", methods=["POST"])
+def add_nuget_feeds():
+    """Add the selected package sources to the user-level NuGet.Config."""
+    body = request.json or {}
+    feeds = body.get("feeds") or []
+    if not isinstance(feeds, list) or not feeds:
+        return jsonify({"ok": False, "error": "no feeds given"})
+    result = nuget_config.add_feeds(feeds, backup=bool(body.get("backup", True)))
+    return jsonify(result)
 
 
 @app.route("/api/pick-folder", methods=["POST"])
@@ -696,6 +818,9 @@ def run_app_window():
 
 
 if __name__ == "__main__":
+    for note in db_store.notes():
+        print(note)
+    print(f"Database: {DB_PATH}")
     init_db()
     load_builtin_definitions()
 

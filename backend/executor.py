@@ -18,6 +18,10 @@ from datetime import datetime
 from queue import Queue, Empty
 from typing import Dict, List, Generator
 
+import results_export
+import db_store
+import sdk_source
+
 # Read-only fixtures shipped with the app (e.g. sample projects that tests
 # copy into their work dir). Resolves under PyInstaller's _MEIPASS when bundled.
 ASSETS_DIR = os.path.join(
@@ -88,18 +92,19 @@ def _render_terminal_output(text: str) -> str:
 
 
 def _get_db_path():
-    if getattr(sys, '_MEIPASS', None):
-        return os.path.join(os.path.dirname(sys.executable), "test_runner.db")
-    return os.path.join(os.path.dirname(__file__), "test_runner.db")
+    return db_store.db_path()
 
 
 DB_PATH = _get_db_path()
+
+# The app's own folder, which stays local even when the DB lives in OneDrive.
+APP_DIR = db_store.default_dir()
 
 
 def _get_screenshots_dir():
     """Root folder for run screenshots, kept next to the DB so it persists in
     both dev and PyInstaller-frozen runs."""
-    return os.path.join(os.path.dirname(DB_PATH), "screenshots")
+    return db_store.screenshots_dir()
 
 
 SCREENSHOTS_DIR = _get_screenshots_dir()
@@ -309,6 +314,9 @@ OWN_WINDOW_TITLE = "Test Runner"
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # The DB may sit in a synced folder, where a sync client can hold the file
+    # for a moment. Wait rather than failing a step write outright.
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
@@ -364,6 +372,37 @@ class TestExecutor:
 
     def _valid_dotnet_root(self, root: str) -> bool:
         return bool(root) and os.path.isfile(self._dotnet_exe(root))
+
+    def _resolve_pinned_root(self, run_id: str, raw: str, what: str):
+        """Resolve a pinned SDK path to an install root, or None if unusable.
+
+        A plain folder is returned as-is; a ``.zip`` SDK is extracted on first
+        use so a zip can be pinned directly instead of being unzipped by hand
+        (issue #74). Progress and failures are logged to the run, since
+        extracting a real SDK zip is slow enough to look like a hang otherwise.
+        """
+        raw = (raw or "").strip()
+        if not raw:
+            return None
+
+        def note(line):
+            self._emit_event(run_id, {
+                "type": "step_output", "result_id": None, "step_index": -1, "line": f"[info] {line}",
+            })
+            self._queue_console_cmd(run_id, f"echo [info] {line}")
+
+        # Fast path: an already-valid folder needs no work and no logging.
+        if self._valid_dotnet_root(raw):
+            return raw
+        root, error = sdk_source.resolve_sdk_root(raw, APP_DIR, log=note)
+        if error:
+            warn = f"[warn] {what}: {error}"
+            self._emit_event(run_id, {
+                "type": "step_output", "result_id": None, "step_index": -1, "line": warn,
+            })
+            self._queue_console_cmd(run_id, f"echo {warn}")
+            return None
+        return root
 
     def _sdk_env(self, run_id: str, base: dict = None) -> dict:
         """Copy of the environment with dotnet pointed at the run's SDK install.
@@ -644,11 +683,17 @@ class TestExecutor:
         write_log("\n" + msg + "\n")
         lines.append("\n" + msg + "\n")
 
-    def _build_screenshot_script(self, label: str, folder: str, folder_ps: str, delay: float, test_name: str = "") -> str:
-        """Generate a PowerShell script that opens a folder in Explorer and saves
-        a screenshot of all monitors into %SCREENSHOT_DIR%. Written to a .ps1 file
-        (not inline) so quoting is unaffected by the cmd console. The saved file is
-        named after the test (and label), e.g. `Workload-Scenario-1-installertype-<ts>.png`."""
+    def _build_screenshot_script(self, label: str, folder: str, folder_ps: str, delay: float, test_name: str = "",
+                                 settings_uri: str = "", search: str = "") -> str:
+        """Generate a PowerShell script that opens a window and saves a screenshot
+        of it into %SCREENSHOT_DIR%. Written to a .ps1 file (not inline) so quoting
+        is unaffected by the cmd console. The saved file is named after the test
+        (and label), e.g. `Workload-Scenario-1-installertype-<ts>.png`.
+
+        Two targets are supported:
+          * a folder opened in File Explorer (`folder` / `folder_ps`), and
+          * a Windows Settings page (`settings_uri`), optionally filtered by
+            typing `search` into the page's search box."""
         def _slug(s):
             return re.sub(r"[^A-Za-z0-9_-]+", "-", (s or "")).strip("-")
         parts = [p for p in (_slug(test_name), _slug(label)) if p]
@@ -657,12 +702,14 @@ class TestExecutor:
             resolve = "$folder = (& { " + folder_ps.strip() + " } | Select-Object -Last 1)"
         else:
             resolve = '$folder = "' + (folder or "").replace('"', '`"') + '"'
-        return "\n".join([
+        head = [
             "$ErrorActionPreference = 'Stop'",
             "Add-Type -AssemblyName System.Windows.Forms",
             "Add-Type -AssemblyName System.Drawing",
             'Add-Type @"',
             "using System;",
+            "using System.Text;",
+            "using System.Collections.Generic;",
             "using System.Runtime.InteropServices;",
             "public class WinCap {",
             '  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);',
@@ -670,49 +717,70 @@ class TestExecutor:
             '  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);',
             '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
             '  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);',
+            '  [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, uint f);',
+            '  [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);',
+            '  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();',
+            '  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);',
+            '  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);',
+            '  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);',
+            '  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);',
+            "  public delegate bool EnumProc(IntPtr h, IntPtr l);",
             "  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }",
+            "  [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }",
+            "  // Settings is hosted by ApplicationFrameHost, so its own process has no",
+            "  // MainWindowHandle; the frame has to be found by walking top-level windows.",
+            "  public static IntPtr[] ByClass(string cls) {",
+            "    var o = new List<IntPtr>();",
+            "    EnumWindows((h, l) => {",
+            "      if (!IsWindowVisible(h)) return true;",
+            "      var c = new StringBuilder(256); GetClassNameW(h, c, 256);",
+            "      if (c.ToString() == cls) o.Add(h);",
+            "      return true;",
+            "    }, IntPtr.Zero);",
+            "    return o.ToArray();",
+            "  }",
             "}",
             '"@',
-            "$folder = $null",
-            "try {",
-            "  " + resolve,
-            "} catch { $folder = $null }",
-            "if (-not $folder) { Write-Error 'Screenshot: could not resolve target folder'; exit 1 }",
-            "if (-not (Test-Path -LiteralPath $folder)) { Write-Error ('Screenshot: folder not found: ' + $folder); exit 1 }",
-            "Write-Host ('Opening folder: ' + $folder)",
-            "Start-Process explorer.exe -ArgumentList ('\"' + $folder + '\"')",
-            f"Start-Sleep -Seconds {float(delay)}",
+            "# The window is measured in physical pixels, so this process must be DPI",
+            "# aware. Without this, a scaled display (laptops commonly run at 125-150%)",
+            "# reports virtualised sizes and PrintWindow renders past the bitmap,",
+            "# cropping the right-hand columns out of the screenshot.",
+            "try { [WinCap]::SetProcessDpiAwarenessContext([IntPtr](-4)) | Out-Null } catch {}",
+            "try { [WinCap]::SetProcessDPIAware() | Out-Null } catch {}",
             "$dir = $env:SCREENSHOT_DIR",
             "if (-not $dir) { $dir = $env:TEMP }",
             "New-Item -ItemType Directory -Force -Path $dir | Out-Null",
-            "$target = ([System.IO.Path]::GetFullPath($folder)).TrimEnd('\\')",
-            "# Locate the Explorer window we just opened for this folder and grab",
-            "# only its pixels (PrintWindow), so the screenshot is cropped to the",
-            "# window instead of capturing the whole desktop. Fall back to a full",
-            "# virtual-screen capture if the window can't be resolved.",
-            "$hwnd = [IntPtr]::Zero",
-            "for ($i = 0; $i -lt 25; $i++) {",
-            "  try {",
-            "    $shell = New-Object -ComObject Shell.Application",
-            "    foreach ($w in @($shell.Windows())) {",
-            "      try {",
-            "        $p = $w.Document.Folder.Self.Path",
-            "        if ($p -and ([System.IO.Path]::GetFullPath($p)).TrimEnd('\\') -ieq $target) { $hwnd = [IntPtr]$w.HWND; break }",
-            "      } catch {}",
-            "    }",
-            "  } catch {}",
-            "  if ($hwnd -ne [IntPtr]::Zero) { break }",
-            "  Start-Sleep -Milliseconds 200",
-            "}",
+        ]
+        if settings_uri:
+            locate = self._settings_locate_lines(settings_uri, search, delay)
+        else:
+            locate = self._explorer_locate_lines(resolve, delay)
+        capture = [
             "$saved = $false",
             f"$file = Join-Path $dir ('{base}-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.png')",
             "if ($hwnd -ne [IntPtr]::Zero) {",
             "  [WinCap]::ShowWindow($hwnd, 9) | Out-Null",
+            "  # Fill the monitor's work area. Explorer otherwise reopens at its",
+            "  # last-remembered size, and on a smaller laptop screen that window is",
+            "  # narrow enough to push the Size column outside the captured window.",
+            "  $mi = New-Object WinCap+MONITORINFO",
+            "  $mi.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($mi)",
+            "  $mon = [WinCap]::MonitorFromWindow($hwnd, 2)",
+            "  if ($mon -ne [IntPtr]::Zero -and [WinCap]::GetMonitorInfo($mon, [ref]$mi)) {",
+            "    $ww = $mi.rcWork.Right - $mi.rcWork.Left",
+            "    $wh = $mi.rcWork.Bottom - $mi.rcWork.Top",
+            "    [WinCap]::SetWindowPos($hwnd, [IntPtr]::Zero, $mi.rcWork.Left, $mi.rcWork.Top, $ww, $wh, 0x0004) | Out-Null",
+            "  } else {",
+            "    [WinCap]::ShowWindow($hwnd, 3) | Out-Null",
+            "  }",
+            "  # Details view (FVM_DETAILS), otherwise a folder remembered in icon or",
+            "  # tile view renders no Size column for the screenshot to show.",
+            "  if ($win) { try { $win.Document.CurrentViewMode = 4 } catch {} }",
             "  $topmost = New-Object System.IntPtr(-1)",
             "  $notop = New-Object System.IntPtr(-2)",
             "  [WinCap]::SetWindowPos($hwnd, $topmost, 0, 0, 0, 0, 0x0003) | Out-Null",
             "  [WinCap]::SetForegroundWindow($hwnd) | Out-Null",
-            "  Start-Sleep -Milliseconds 400",
+            "  Start-Sleep -Milliseconds 800",
             "  $r = New-Object WinCap+RECT",
             "  [WinCap]::GetWindowRect($hwnd, [ref]$r) | Out-Null",
             "  $w2 = $r.Right - $r.Left; $h2 = $r.Bottom - $r.Top",
@@ -738,19 +806,124 @@ class TestExecutor:
             "  $g.Dispose(); $bmp.Dispose()",
             "}",
             "Write-Host ('Screenshot saved: ' + $file)",
-            "# Close only the Explorer window we opened for this folder, leaving",
-            "# any other windows the user has open untouched. Best-effort.",
+        ]
+        if settings_uri:
+            cleanup = [
+                "# Close Settings only if this script opened it, leaving a window the",
+                "# user already had open untouched. Best-effort.",
+                "if ($weOpenedSettings) {",
+                "  try { Get-Process -Name SystemSettings -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null } } catch {}",
+                "}",
+            ]
+        else:
+            cleanup = [
+                "# Close only the Explorer window we opened for this folder, leaving",
+                "# any other windows the user has open untouched. Best-effort.",
+                "try {",
+                "  $shell = New-Object -ComObject Shell.Application",
+                "  foreach ($w in @($shell.Windows())) {",
+                "    try {",
+                "      $p = $w.Document.Folder.Self.Path",
+                "      if ($p -and ([System.IO.Path]::GetFullPath($p)).TrimEnd('\\') -ieq $target) { $w.Quit() }",
+                "    } catch {}",
+                "  }",
+                "} catch {}",
+            ]
+        return "\n".join(head + locate + capture + cleanup + ["exit 0"])
+
+    def _explorer_locate_lines(self, resolve: str, delay: float) -> list:
+        """PowerShell that opens a folder in Explorer and resolves its window into
+        `$hwnd` (plus `$win`, the Shell window object, and `$target`, the path)."""
+        return [
+            "$folder = $null",
             "try {",
-            "  $shell = New-Object -ComObject Shell.Application",
-            "  foreach ($w in @($shell.Windows())) {",
+            "  " + resolve,
+            "} catch { $folder = $null }",
+            "if (-not $folder) { Write-Error 'Screenshot: could not resolve target folder'; exit 1 }",
+            "if (-not (Test-Path -LiteralPath $folder)) { Write-Error ('Screenshot: folder not found: ' + $folder); exit 1 }",
+            "Write-Host ('Opening folder: ' + $folder)",
+            "Start-Process explorer.exe -ArgumentList ('\"' + $folder + '\"')",
+            f"Start-Sleep -Seconds {float(delay)}",
+            "$target = ([System.IO.Path]::GetFullPath($folder)).TrimEnd('\\')",
+            "# Locate the Explorer window we just opened for this folder and grab",
+            "# only its pixels (PrintWindow), so the screenshot is cropped to the",
+            "# window instead of capturing the whole desktop. Fall back to a full",
+            "# virtual-screen capture if the window can't be resolved.",
+            "$hwnd = [IntPtr]::Zero",
+            "$win = $null",
+            "for ($i = 0; $i -lt 25; $i++) {",
+            "  try {",
+            "    $shell = New-Object -ComObject Shell.Application",
+            "    foreach ($w in @($shell.Windows())) {",
+            "      try {",
+            "        $p = $w.Document.Folder.Self.Path",
+            "        if ($p -and ([System.IO.Path]::GetFullPath($p)).TrimEnd('\\') -ieq $target) { $hwnd = [IntPtr]$w.HWND; $win = $w; break }",
+            "      } catch {}",
+            "    }",
+            "  } catch {}",
+            "  if ($hwnd -ne [IntPtr]::Zero) { break }",
+            "  Start-Sleep -Milliseconds 200",
+            "}",
+        ]
+
+    def _settings_locate_lines(self, uri: str, search: str, delay: float) -> list:
+        """PowerShell that opens a Windows Settings page, optionally filters it by
+        typing into the page's search box, and resolves its window into `$hwnd`."""
+        uri_lit = "'" + (uri or "").replace("'", "''") + "'"
+        search_lit = "'" + (search or "").replace("'", "''") + "'"
+        return [
+            "Add-Type -AssemblyName UIAutomationClient",
+            "Add-Type -AssemblyName UIAutomationTypes",
+            "$win = $null",
+            "$target = $null",
+            "$weOpenedSettings = -not (Get-Process -Name SystemSettings -ErrorAction SilentlyContinue)",
+            f"Write-Host ('Opening Settings: ' + {uri_lit})",
+            f"Start-Process {uri_lit}",
+            f"Start-Sleep -Seconds {float(delay)}",
+            "# Settings runs inside ApplicationFrameHost, so its frame window is found",
+            "# by class and then confirmed by the 'Find a setting' box, whose",
+            "# AutomationId is stable across Windows display languages.",
+            "$hwnd = [IntPtr]::Zero",
+            "$root = $null",
+            "for ($i = 0; $i -lt 30; $i++) {",
+            "  foreach ($h in [WinCap]::ByClass('ApplicationFrameWindow')) {",
             "    try {",
-            "      $p = $w.Document.Folder.Self.Path",
-            "      if ($p -and ([System.IO.Path]::GetFullPath($p)).TrimEnd('\\') -ieq $target) { $w.Quit() }",
+            "      $e = [System.Windows.Automation.AutomationElement]::FromHandle($h)",
+            "      $c = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'CommandSearchTextBox')",
+            "      if ($e.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)) { $hwnd = $h; $root = $e; break }",
             "    } catch {}",
             "  }",
-            "} catch {}",
-            "exit 0",
-        ])
+            "  if ($hwnd -ne [IntPtr]::Zero) { break }",
+            "  Start-Sleep -Milliseconds 400",
+            "}",
+            "if ($hwnd -eq [IntPtr]::Zero) { Write-Error 'Screenshot: Settings window not found'; exit 1 }",
+            f"$q = {search_lit}",
+            "if ($q -and $root) {",
+            "  # Filter the page's own list. Any Edit other than the global search box",
+            "  # is the in-page filter, so the same step works on other Settings pages.",
+            "  $box = $null",
+            "  for ($i = 0; $i -lt 20; $i++) {",
+            "    try {",
+            "      $ec = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)",
+            "      foreach ($x in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ec)) {",
+            "        if ($x.Current.AutomationId -ne 'CommandSearchTextBox') { $box = $x; break }",
+            "      }",
+            "    } catch {}",
+            "    if ($box) { break }",
+            "    Start-Sleep -Milliseconds 400",
+            "  }",
+            "  if ($box) {",
+            "    try {",
+            "      $vp = $box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)",
+            "      $vp.SetValue($q)",
+            "      Write-Host ('Filtered Settings by: ' + $q)",
+            "      Start-Sleep -Seconds 3",
+            "    } catch { Write-Host ('Could not fill the Settings search box: ' + $_.Exception.Message) }",
+            "  } else {",
+            "    Write-Host 'Settings search box not found; capturing the unfiltered page'",
+            "  }",
+            "}",
+        ]
 
     def _open_console(self, run_id: str):
         """Open a visible console/terminal window that executes commands."""
@@ -885,6 +1058,40 @@ class TestExecutor:
 
             threading.Thread(target=_reclaim, daemon=True).start()
 
+    def _export_results(self, run_id: str):
+        """Copy the finished run to the persistent results folder.
+
+        Best-effort: a share being unreachable is reported in the log but must
+        never fail the run, whose results are already committed to the DB.
+        """
+        def _line(text):
+            self._emit_event(run_id, {
+                "type": "step_output", "result_id": None, "step_index": -1, "line": text,
+            })
+
+        # Copying to a network share or a cold OneDrive folder is not instant,
+        # so say what is happening before blocking on it.
+        _line("\n💾 Saving results…")
+        # Fold the WAL back into the DB file first: when the DB itself lives in
+        # OneDrive, the copy that syncs has to be self-contained.
+        db_store.checkpoint()
+        try:
+            result = results_export.export_run(run_id, DB_PATH, SCREENSHOTS_DIR)
+        except Exception as exc:
+            _line(f"[warn] results export failed: {exc}")
+            return
+
+        if not result.get("exported"):
+            _line(f"[warn] results export failed: {result.get('reason')}")
+            return
+
+        _line(f"📁 Results saved to: {result['path']}")
+        if not result.get("persistent"):
+            _line(
+                "[warn] results were saved locally and will be lost with this machine. "
+                f"Set {results_export.ENV_ROOT} to a OneDrive folder or network share."
+            )
+
     def _notify_run_complete(self, status: str, counts: dict):
         """Pop a foreground message box when a run finishes (Windows only).
 
@@ -996,18 +1203,25 @@ class TestExecutor:
         except OSError:
             pass
 
-        # Validate a pinned SDK folder (e.g. a zip-extracted install). If it is
-        # invalid, fall back to the PATH default and warn loudly so a "zip install"
-        # test isn't silently run against the wrong (exe-installed) SDK.
-        root = self._dotnet_root(run_id)
-        if root and not self._valid_dotnet_root(root):
-            warn = f"[warn] SDK folder not found or missing dotnet executable: {root}. Falling back to PATH dotnet."
+        # Validate a pinned SDK folder (e.g. a zip-extracted install) or extract a
+        # pinned .zip SDK. If it is unusable, fall back to the PATH default and
+        # warn loudly so a "zip install" test isn't silently run against the wrong
+        # (exe-installed) SDK.
+        raw_root = self._dotnet_root(run_id)
+        root = self._resolve_pinned_root(run_id, raw_root, "SDK folder") if raw_root else None
+        if raw_root and not root:
+            warn = f"[warn] SDK folder not found or missing dotnet executable: {raw_root}. Falling back to PATH dotnet."
             self._runs[run_id]["sdk_path"] = None
             self._emit_event(run_id, {"type": "step_output", "result_id": None, "step_index": -1, "line": warn})
             self._queue_console_cmd(run_id, f"echo {warn}")
             conn.execute("UPDATE test_runs SET sdk_path=NULL WHERE id=?", (run_id,))
             conn.commit()
         elif root:
+            # An extracted zip resolves to a different folder than the user gave.
+            if root != raw_root:
+                self._runs[run_id]["sdk_path"] = root
+                conn.execute("UPDATE test_runs SET sdk_path=? WHERE id=?", (root, run_id))
+                conn.commit()
             msg = f"[info] Using pinned SDK install: {root}"
             self._emit_event(run_id, {"type": "step_output", "result_id": None, "step_index": -1, "line": msg})
             self._queue_console_cmd(run_id, f"echo {msg}")
@@ -1139,13 +1353,15 @@ class TestExecutor:
             # Resolve this test's SDK context: a valid per-test folder overrides
             # the run-level one for this test only; otherwise the run-level applies.
             test_root = (test.get("sdk_path") or "").strip() or None
-            if test_root and not self._valid_dotnet_root(test_root):
-                self._emit_event(run_id, {
-                    "type": "step_output", "result_id": result_id, "step_index": -1,
-                    "line": f"[warn] Test SDK folder not found or missing dotnet: {test_root}. Using run default.",
-                })
-                self._queue_console_cmd(run_id, f"echo [warn] test SDK folder invalid: {test_root}; using run default")
-                test_root = None
+            if test_root:
+                resolved = self._resolve_pinned_root(run_id, test_root, "Test SDK folder")
+                if not resolved:
+                    self._emit_event(run_id, {
+                        "type": "step_output", "result_id": result_id, "step_index": -1,
+                        "line": f"[warn] Test SDK folder not found or missing dotnet: {test_root}. Using run default.",
+                    })
+                    self._queue_console_cmd(run_id, f"echo [warn] test SDK folder invalid: {test_root}; using run default")
+                test_root = resolved
             if test_root and test_root != run_level_root:
                 self._runs[run_id]["_active_sdk_path"] = test_root
                 # Resolve the version from this test's install for tfm + global.json.
@@ -1207,6 +1423,12 @@ class TestExecutor:
         )
         conn.commit()
         conn.close()
+
+        # Export before the run_end event: the client closes the SSE stream as
+        # soon as run_end arrives, so anything emitted after it never renders.
+        # The app usually runs on a VM that is destroyed after the build, so
+        # this is the only copy of the results that survives.
+        self._export_results(run_id)
 
         self._emit_event(run_id, {
             "type": "run_end",
@@ -1524,7 +1746,7 @@ class TestExecutor:
                     with open(script_path, "w", encoding="utf-8") as sf:
                         sf.write(self._build_screenshot_script(
                             label, step.get("folder", ""), step.get("folder_ps", ""), delay,
-                            test_name,
+                            test_name, step.get("settings_uri", ""), step.get("search", ""),
                         ))
                 except OSError as e:
                     self._emit_event(run_id, {

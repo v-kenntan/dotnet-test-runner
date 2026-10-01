@@ -14,22 +14,45 @@ To force browser/web mode, set the environment variable `APP_MODE=web` before la
 
 ## Selecting a specific SDK install (e.g. zip vs. exe)
 
-By default, all `dotnet` commands run against the SDK on the machine's `PATH` (typically the `.exe`/installer SDK under `C:\Program Files\dotnet`). To exercise a **different SDK install** — for example a `.zip`-extracted SDK, which uses the file-based workload install type — pin an **SDK folder** on the individual test:
+By default, all `dotnet` commands run against the SDK on the machine's `PATH` (typically the `.exe`/installer SDK under `C:\Program Files\dotnet`). The **SDK dropdown** at the top of the app lists the installs `dotnet --list-sdks` reports, named the way Windows **Settings → Installed apps** names them — architecture and install source included:
 
-1. Open the test in the editor and set the **SDK folder (optional)** field to the SDK install root — the folder that contains `dotnet.exe` (e.g. `C:\dotnet-zip`). Use **📁 Browse** to pick it, or set an `sdk_path` key in a YAML test definition.
-2. Run the test. Its commands execute against that install (`DOTNET_ROOT` is set, the folder is prepended to `PATH`, and multi-level lookup is disabled), so `dotnet --info` reports that folder as its **Base Path**.
-3. Leave the field blank to use the default `PATH` SDK.
+```
+11.0.100-preview.7.26366.102 (x64)
+10.0.400-preview.0.25322.101 (x64) from Visual Studio
+```
+
+(The extra detail comes from the Windows installed-apps registry; if an SDK has no registry entry, its plain version number is shown.)
+
+### Pinning a zip SDK or any other folder
+
+To exercise an SDK that isn't installed — for example a `.zip` SDK, which uses the file-based workload install type — pick **📦 Enter .zip or folder path…** in the SDK dropdown and paste either:
+
+- a path to an SDK **`.zip`** (e.g. `C:\Downloads\dotnet-sdk-11.0.100-win-x64.zip`), or
+- a path to an already-extracted **SDK folder** — the one containing `dotnet.exe`.
+
+A zip is extracted once into `sdk_zips/` next to the app's database and reused on every later run, so you only pay the extraction cost the first time. Rebuilding the zip at the same path produces a fresh extraction. The app validates the path immediately and shows the resolved version, so you find out before starting a run.
+
+The whole run then executes against that install (`DOTNET_ROOT` is set, the folder is prepended to `PATH`, and multi-level lookup is disabled), so `dotnet --info` reports it as the **Base Path**.
+
+### Pinning an SDK on a single test
+
+An individual test can override the run's SDK. Open it in the editor and set the **SDK folder (optional)** field, or set an `sdk_path` key in a YAML test definition. This field accepts a **`.zip` or a folder**, exactly like the dropdown, and uses the same extraction cache. Leave it blank to use the run's SDK.
+
+Tests that are only meaningful against a pinned install — the **zip install** workload cases — carry `requires_sdk_path: true` in their YAML and show the same **SDK folder** box inline in the test list, so the folder can be picked without opening the editor. Both boxes write the same `sdk_path` field, so whichever one you use, the other shows the new value. A pinned folder survives restarts: `sdk_path` is per machine, so the built-in re-seed on startup deliberately leaves it (and `workload_version`) alone.
 
 Precedence per test:
 
 1. A valid per-test `sdk_path` → that install.
-2. Otherwise the machine's `PATH` SDK.
+2. Otherwise the SDK pinned for the run.
+3. Otherwise the machine's `PATH` SDK.
 
-If a per-test folder is set but invalid (missing `dotnet`), the run logs a warning and falls back to the `PATH` SDK. This lets, say, the "zip install" workload tests target a zip SDK while the rest of the run uses the default.
+If a pinned path is invalid (not found, or no `dotnet.exe` in it or one level below), the run logs a warning and falls back to the `PATH` SDK. This lets, say, the "zip install" workload tests target a zip SDK while the rest of the run uses the default.
 
 ## Screenshots (evidence capture)
 
-A test can capture a screenshot as evidence using a `screenshot` step (Windows only). It opens a folder in Explorer and saves a PNG of the primary screen:
+A test can capture a screenshot as evidence using a `screenshot` step (Windows only). It opens a window, captures just that window, and saves a PNG. Two targets are supported.
+
+**A folder in File Explorer:**
 
 ```yaml
 - type: screenshot
@@ -43,7 +66,91 @@ A test can capture a screenshot as evidence using a `screenshot` step (Windows o
   # folder: 'C:\Program Files\dotnet\metadata\workloads'
 ```
 
-Screenshots are saved under `screenshots/<run_id>/` next to the app's database and can be browsed in the **Screenshots** tab of a run's detail view. **Workload Scenario 1** uses this to capture the `installertype` folder (per issue #47), and **Workload Scenario 2** captures the `Microsoft.NET.Runtime.MonoAOTCompiler.Task\<version>\Sdk` pack folder before and after it is emptied.
+**A Windows Settings page**, optionally filtered by typing into the page's own search box:
+
+```yaml
+- type: screenshot
+  label: settings-installed-apps
+  settings_uri: ms-settings:appsfeatures   # any ms-settings: URI
+  search: .net                             # typed into the page's search box (optional)
+  delay: 6
+```
+
+The Settings window is located by UI Automation rather than by its title, so it is found regardless of the Windows display language, and it is closed afterwards only if the step opened it.
+
+Screenshots are saved under `screenshots/<run_id>/` next to the app's database and can be browsed in the **Screenshots** tab of a run's detail view. **Test 1** captures the installed .NET apps in Settings and the `sdk` folders in Explorer, as two extra checkpoints beyond `dotnet --info` (per issue #55) — the Explorer one follows `DOTNET_ROOT`, so it shows the SDK folders of whichever install the run pinned. **Workload Scenario 1** captures the `installertype` folder (per issue #47), and **Workload Scenario 2** captures the `Microsoft.NET.Runtime.MonoAOTCompiler.Task\<version>\Sdk` pack folder before and after it is emptied.
+
+## NuGet feeds
+
+Restores fail with `NU1102` when the required package sources are missing, which surfaces as a *failed test* rather than as a configuration problem. The **📦 NuGet.Config** button in the SDK banner opens a panel that:
+
+- shows the user-level config path (`%APPDATA%\NuGet\NuGet.Config`) and the sources already in it,
+- flags each required feed as present or missing — including a feed that is configured but sitting in `<disabledPackageSources>`, which restore silently ignores,
+- adds the missing ones in one click, and
+- lets you add any other feed by name and URL.
+
+There is only one config file per machine but the feeds a build needs depend on the SDK, so each required feed is labelled with the SDK it is for. NuGet only creates the file once an SDK has been used (e.g. `dotnet --info`); if it is missing, the app says so and creates it when you add a feed. `NuGet.Config.bak` is written before any change.
+
+## Saving results so they outlive the VM
+
+Testers typically run this on a throwaway VM per .NET build, where anything written next to the exe is lost when the VM goes away. Every finished run is therefore **also exported to a persistent destination**, and any past run can be re-exported from its detail view with **💾 Save to results folder**.
+
+The destination is just *a path*, so a synced OneDrive folder, a UNC share (`\\server\share\results`) or a mounted drive all work with no configuration difference — OneDrive is simply "a path that happens to sync". Set it with the `DTR_RESULTS_DIR` environment variable:
+
+```bat
+set DTR_RESULTS_DIR=\\server\share\dotnet-test-results
+:: ...or a OneDrive folder
+set DTR_RESULTS_DIR=%OneDriveCommercial%\dotnet-test-runner
+```
+
+Resolution order:
+
+| Order | Source | Result |
+|-------|--------|--------|
+| 1 | `DTR_RESULTS_DIR` | Used as-is (expands `%VARS%` and `~`) |
+| 2 | `%OneDriveCommercial%`, `%OneDriveConsumer%`, `%OneDrive%` | `<OneDrive>\dotnet-test-runner` — first one that exists wins |
+| 3 | *(nothing configured)* | `results/` next to the database, **which dies with the VM** |
+
+Falling back to (3) is called out in the UI and in the run log, so a tester is warned *before* tearing the VM down rather than after.
+
+Each run is written to a collision-proof folder, so many VMs can share one destination:
+
+```
+<root>/<sdk-version>/<machine>-<timestamp>-<run-id>/
+    report.md          # the same Markdown report as the export button
+    run.json           # run, results and every step — mergeable across VMs
+    test_runner.db     # consistent copy of the whole database
+    screenshots/*.png
+```
+
+The folder name uses the run's *start* time, so re-exporting a run overwrites its own folder instead of creating duplicates. Set `DTR_EXPORT_DB=0` to skip the database copy.
+
+### The live database goes there too
+
+The exports above are a *record*; the app's own run history lives in `test_runner.db`. That file used to sit next to the exe, so **rebuilding the app wiped the history**, and re-imaging the VM lost it entirely. It is now kept under the same persistent root:
+
+```
+<root>/history/test_runner.db
+<root>/history/screenshots/<run_id>/*.png
+```
+
+so history and screenshots carry across rebuilds *and* across VMs. The Dashboard shows exactly where it is, next to the results destination.
+
+Resolution order:
+
+| Order | Source | Result |
+|-------|--------|--------|
+| 1 | `DTR_DB_PATH` | Used as-is — a full path to the `.db` file |
+| 2 | The results root above, when it is persistent | `<root>\history\test_runner.db` |
+| 3 | *(nothing configured)* | Next to the exe, **where the next rebuild wipes it** |
+
+The first time the database moves, any existing history and screenshots are copied across automatically. If the destination cannot be written — an offline share, a read-only folder — the app logs a warning and keeps using the local file rather than refusing to start.
+
+Extracted zip SDKs (`sdk_zips/`) deliberately stay next to the exe: they are hundreds of megabytes and have no business being synced.
+
+> **One machine at a time.** A single shared database keeps the history combined across the VM-per-build workflow, but two machines writing the same OneDrive folder simultaneously is not supported — OneDrive would produce conflict copies. Give each concurrent machine its own `DTR_DB_PATH` if you ever need that.
+
+> **If you use OneDrive sync:** the files are only written *locally* and uploaded in the background. Confirm OneDrive has finished syncing before destroying the VM. A network share has no such delay — the write either lands or reports an error immediately.
 
 ## Workload scenarios
 
@@ -55,7 +162,7 @@ The **Workloads** category mirrors the "Test cases for Workloads" plan:
 
 > **Scenario 3 removes the .NET SDK from the machine.** It is ordered last so that a "run everything" pass does not break the tests behind it, and every later test would fail until the SDK is reinstalled. Run it on a VM you can re-image.
 
-Scenarios 2 and 3 install MSI workloads and (for Scenario 3) run the SDK uninstall bundle, so the runner must be started elevated.
+Scenarios 2 and 3 install MSI workloads and (for Scenario 3) run the SDK uninstall bundle, so the runner should be started elevated. Scenario 2 also deletes files under `C:\Program Files\dotnet`; if the runner is not elevated, that step requests administrator permission with a UAC prompt you have to approve for the run to continue.
 
 ## HTTPS development certificate
 
@@ -150,6 +257,7 @@ tests:
     description: "What this tests"
     machine_mutating: false  # true if it modifies global state
     continuous: false        # true to chain with adjacent continuous tests
+    requires_sdk_path: false # true to show the SDK folder picker inline in the test list
     workload_version: ""     # optional seed for {workload_version}
     steps:
       - type: command
@@ -174,8 +282,16 @@ tests:
 
 | Type | Fields | Description |
 |------|--------|-------------|
-| `command` | command, timeout, expected_exit_code, assert_output_contains, continue_on_error | Execute a CLI command |
-| `write_file` | path, content | Write content to a file |
+| `command` | command, timeout, expected_exit_code, assert_output_contains, continue_on_error, run_timeout, screenshot, label | Execute a CLI command |
+| `write_file` | path, content, screenshot, label | Write content to a file |
+| `screenshot` | label, delay, folder / folder_ps / settings_uri + search | Open a folder in Explorer or a Settings page and capture that window (see [Screenshots](#screenshots-evidence-capture)) |
+
+Two flags capture evidence without a dedicated `screenshot` step:
+
+- `run_timeout: 10` on a `command` step runs a blocking GUI app (WinForms/WPF), leaves the window up for that many seconds, then closes it and passes. Adding `screenshot: true` captures the window before it closes.
+- `screenshot: true` on a `write_file` step writes the file through Notepad and captures the Notepad window.
+
+Both are Windows-only and are used by the C# WinForms/WPF and xUnit/NUnit/MSTest tests, the VB equivalents, and the **Non-native SDK (x86)** test. An optional `label` names the resulting PNG; it defaults to the project folder (`command`) or the file name (`write_file`), so set it explicitly when one test captures two files with the same name.
 
 ### Placeholders
 
@@ -207,6 +323,10 @@ dotnet-test-runner/
 ├── backend/
 │   ├── app.py              # Flask API server + static file serving
 │   ├── executor.py         # Test execution engine (Popen + SSE)
+│   ├── results_export.py   # Persistent run export (OneDrive / UNC share)
+│   ├── db_store.py         # Where the live database and screenshots are kept
+│   ├── sdk_source.py       # Zip SDK extraction + install-root resolution
+│   ├── nuget_config.py     # NuGet.Config feed inspection and repair
 │   ├── test_definitions/   # Built-in YAML test cases
 │   ├── static/             # Pre-built React frontend
 │   └── requirements.txt

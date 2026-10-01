@@ -35,6 +35,10 @@ body {
   background: var(--surface);
   padding: 0.75rem 2rem;
   border-bottom: 1px solid var(--surface-2);
+  position: sticky;
+  top: 0;
+  /* Above the sticky tests toolbar (10), below the modal overlay (100). */
+  z-index: 20;
 }
 
 .header-top {
@@ -55,6 +59,44 @@ body {
   padding: 0.35rem 0.75rem;
   border-radius: 4px;
   font-size: 0.8rem;
+  /* The SDK path entry row drops onto its own line when opened. */
+  flex-wrap: wrap;
+}
+
+.sdk-path-row {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.sdk-path-input {
+  flex: 1;
+  min-width: 18rem;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid currentColor;
+  color: inherit;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+
+.sdk-path-input::placeholder {
+  color: inherit;
+  opacity: 0.6;
+}
+
+.sdk-path-note {
+  opacity: 0.8;
+}
+
+.sdk-path-error {
+  color: var(--error);
+  font-weight: 600;
 }
 
 .sdk-found {
@@ -88,8 +130,14 @@ body {
   outline: 1px solid currentColor;
 }
 
-.sdk-refresh-btn {
+.sdk-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sdk-refresh-btn {
   background: transparent;
   border: 1px solid currentColor;
   color: inherit;
@@ -152,7 +200,8 @@ body {
   gap: 0.5rem;
   margin-bottom: 1rem;
   position: sticky;
-  top: 0;
+  /* Park below the pinned header, whose height varies with the SDK banner. */
+  top: var(--header-h, 0px);
   z-index: 10;
   background: var(--bg);
   padding: 0.75rem 0;
@@ -180,6 +229,61 @@ body {
 .run-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed !important;
+}
+
+/* Test search */
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 12rem;
+  max-width: 28rem;
+}
+
+.search-icon {
+  position: absolute;
+  left: 0.5rem;
+  font-size: 0.75rem;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.search-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--surface-2);
+  color: var(--text);
+  padding: 0.4rem 1.8rem 0.4rem 1.9rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.search-clear {
+  position: absolute;
+  right: 0.25rem;
+  background: none !important;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem !important;
+  font-size: 0.75rem !important;
+  line-height: 1;
+}
+
+.search-clear:hover {
+  color: var(--text);
+}
+
+.search-status {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin: -0.5rem 0 0.75rem;
 }
 
 /* Test List */
@@ -244,6 +348,55 @@ body {
   width: 100%;
   margin-top: 0.25rem;
   padding-left: 1.5rem;
+}
+
+.test-sdk-path {
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.4rem 0 0.1rem 1.5rem;
+}
+
+.test-sdk-path-label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.test-sdk-path .sdk-folder-row input {
+  flex: 1;
+  min-width: 14rem;
+  background: var(--bg);
+  border: 1px solid var(--surface-2);
+  color: var(--text);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.45rem;
+  font-family: inherit;
+}
+
+.test-sdk-path-note {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.test-sdk-path-note.ok {
+  color: var(--success);
+}
+
+.test-sdk-path-note.error {
+  color: var(--error);
+  white-space: normal;
+}
+
+.test-sdk-path-warn {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--warning);
+  margin-top: 0.25rem;
 }
 
 .badge {
@@ -430,6 +583,37 @@ body {
 
 .export-btn:hover {
   opacity: 0.85;
+}
+
+/* Where run exports land. Warn styling when they never leave this machine. */
+.results-destination {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+}
+
+.results-destination.warn {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.results-destination code {
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  word-break: break-all;
+}
+
+.results-destination-icon {
+  flex-shrink: 0;
 }
 
 .summary-cards {
@@ -742,7 +926,7 @@ body {
   cursor: not-allowed;
 }
 
-.dashboard-view .empty-state {
+.empty-state {
   color: var(--text-muted, #888);
   text-align: center;
   padding: 2rem;
@@ -1224,4 +1408,109 @@ body {
 .modal-actions button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* NuGet.Config panel (issue #64) — inspect and repair the machine's package
+   sources so restores don't fail with NU1102 mid-run. */
+.nuget-modal {
+  max-width: 720px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.nuget-modal h4 {
+  font-size: 0.9rem;
+  margin: 0.4rem 0 0;
+  color: var(--text);
+}
+
+.nuget-path {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+  user-select: all;
+}
+
+.nuget-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.nuget-warn {
+  font-size: 0.85rem;
+  color: var(--warning);
+}
+
+.nuget-ok {
+  font-size: 0.85rem;
+  color: var(--success);
+}
+
+.nuget-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.nuget-list li {
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+.nuget-list label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.nuget-key {
+  font-weight: 600;
+}
+
+.nuget-sdk {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 0.05rem 0.5rem;
+}
+
+.nuget-url {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  word-break: break-all;
+  margin-top: 0.2rem;
+}
+
+.nuget-state-ok {
+  color: var(--success);
+}
+
+.nuget-state-missing {
+  color: var(--error);
+}
+
+.nuget-custom {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.nuget-custom input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--surface-2);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
 }
