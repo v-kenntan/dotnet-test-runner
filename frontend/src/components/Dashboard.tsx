@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { TestRun } from '../api';
 import { formatTime } from '../report';
+import ResultsDestinationBanner from './ResultsDestinationBanner';
 
 interface DashboardProps {
   runs: TestRun[];
@@ -102,6 +103,7 @@ export default function Dashboard({ runs, onViewRun, onRetryRun, isRunning }: Da
   return (
     <div className="dashboard-view">
       <h2>Run History</h2>
+      <ResultsDestinationBanner />
       {runs.length === 0 ? (
         <p className="empty-state">No test runs yet. Select tests and run them to see results here.</p>
       ) : (

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, deleteTest, TestRun, fetchRunDetails, fetchDevCertStatus } from './api'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, resolveSdkPath, deleteTest, setTestSdkPath, TestRun, fetchRunDetails, fetchDevCertStatus } from './api'
 import { resultLine } from './report'
 import TestList from './components/TestList'
 import TestRunner from './components/TestRunner'
@@ -10,10 +10,16 @@ import TestEditor from './components/TestEditor'
 import Dashboard from './components/Dashboard'
 import RunDetail from './components/RunDetail'
 import DevCertPrompt from './components/DevCertPrompt'
+import NuGetConfigPanel from './components/NuGetConfigPanel'
 
 type View = 'dashboard' | 'tests' | 'running' | 'history_detail' | 'editor';
 
 const BASE_TITLE = '.NET SDK Test Runner';
+
+/** Sentinel option value for an SDK pinned by path rather than discovered. */
+const CUSTOM_SDK = '__custom_sdk__';
+/** Sentinel option value that opens the path entry box. */
+const PICK_SDK_PATH = '__pick_sdk_path__';
 
 /** Steps that host or browse an HTTPS site need a trusted dev certificate. */
 const HTTPS_STEP_RE = /dev-certs\s+https|https:\/\/localhost/i;
@@ -44,12 +50,58 @@ export default function App() {
   const [sdkLoading, setSdkLoading] = useState(false);
   const [sdkList, setSdkList] = useState<SdkEntry[]>([]);
   const [selectedSdk, setSelectedSdk] = useState<string>('');
+  // A .zip or folder SDK the user pinned by path, which no installer registered
+  // and so never appears in `dotnet --list-sdks` (issue #74).
+  const [customSdk, setCustomSdk] = useState<{ root: string; version: string; label: string } | null>(null);
+  const [sdkPathInput, setSdkPathInput] = useState('');
+  const [sdkPathOpen, setSdkPathOpen] = useState(false);
+  const [sdkPathBusy, setSdkPathBusy] = useState(false);
+  const [sdkPathError, setSdkPathError] = useState<string | null>(null);
+  // Missing NuGet feeds make restores fail with NU1102, which looks like a test
+  // failure, so the config is editable from the banner (issue #64).
+  const [nugetOpen, setNugetOpen] = useState(false);
   const [runnerTests, setRunnerTests] = useState<TestCase[]>([]);
   const [selectedRun, setSelectedRun] = useState<TestRun | null>(null);
   const [runResults, setRunResults] = useState<any[]>([]);
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
   const [checkingCert, setCheckingCert] = useState(false);
+  const [search, setSearch] = useState('');
   const logViewerRef = useRef<LogViewerHandle>(null);
+  const headerRef = useRef<HTMLElement>(null);
+
+  // The header is pinned, so anything else that sticks (the tests toolbar) has
+  // to start below it. Its height changes with the SDK banner, so publish the
+  // measured value instead of hard-coding an offset.
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const publish = () => {
+      document.documentElement.style.setProperty('--header-h', `${header.offsetHeight}px`);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
+
+  // Tests matching the search box. Matches on what a tester is likely to
+  // remember about a case: its name, what it does, and the commands it runs.
+  // Every whitespace-separated term must match, so "workload repair" narrows
+  // instead of widening.
+  const visibleTests = useMemo(() => {
+    const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return tests;
+    return tests.filter(test => {
+      const haystack = [
+        test.id,
+        test.title,
+        test.description,
+        test.category,
+        ...(test.steps || []).map(s => `${s.command || ''} ${s.path || ''}`),
+      ].join(' ').toLowerCase();
+      return terms.every(term => haystack.includes(term));
+    });
+  }, [tests, search]);
 
   const refreshSdk = useCallback(async () => {
     setSdkLoading(true);
@@ -83,7 +135,7 @@ export default function App() {
   const handleSelectAll = useCallback((category?: string) => {
     if (category) {
       // Toggle all in this category only
-      const categoryIds = tests.filter(t => t.category === category).map(t => t.id);
+      const categoryIds = visibleTests.filter(t => t.category === category).map(t => t.id);
       setSelectedIds(prev => {
         const allSelected = categoryIds.every(id => prev.has(id));
         const next = new Set(prev);
@@ -95,10 +147,11 @@ export default function App() {
         return next;
       });
     } else {
-      // Select all tests
-      setSelectedIds(new Set(tests.map(t => t.id)));
+      // Select every test the search is currently showing, keeping anything
+      // already selected under a previous search.
+      setSelectedIds(prev => new Set([...prev, ...visibleTests.map(t => t.id)]));
     }
-  }, [tests]);
+  }, [visibleTests]);
 
   const handleDeselectAll = useCallback(() => {
     setSelectedIds(new Set());
@@ -176,8 +229,35 @@ export default function App() {
 
   const handleRun = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    await runTests(Array.from(selectedIds), selectedSdk);
-  }, [selectedIds, selectedSdk, runTests]);
+    const usingCustom = selectedSdk === CUSTOM_SDK && customSdk;
+    await runTests(
+      Array.from(selectedIds),
+      usingCustom ? customSdk!.version : selectedSdk,
+      usingCustom ? customSdk!.root : undefined,
+    );
+  }, [selectedIds, selectedSdk, customSdk, runTests]);
+
+  /** Resolve the typed path (folder or .zip) and pin it as the run's SDK. */
+  const handleUseSdkPath = useCallback(async () => {
+    const path = sdkPathInput.trim();
+    if (!path) return;
+    setSdkPathBusy(true);
+    setSdkPathError(null);
+    try {
+      const res = await resolveSdkPath(path);
+      if (!res.ok || !res.root || !res.version) {
+        setSdkPathError(res.error || 'could not resolve that path');
+        return;
+      }
+      setCustomSdk({ root: res.root, version: res.version, label: res.label || res.version });
+      setSelectedSdk(CUSTOM_SDK);
+      setSdkPathOpen(false);
+    } catch (e: any) {
+      setSdkPathError(e?.message || 'could not resolve that path');
+    } finally {
+      setSdkPathBusy(false);
+    }
+  }, [sdkPathInput]);
 
   const handleCancel = useCallback(async () => {
     if (runId) {
@@ -229,8 +309,13 @@ export default function App() {
     setTests(data);
   }, []);
 
-  const handleDelete = useCallback(async (test: TestCase) => {
-    if (!window.confirm(`Delete test "${test.title}"?`)) return;
+  const handleSdkPathChange = useCallback(async (test: TestCase, sdkPath: string | null) => {
+    await setTestSdkPath(test.id, sdkPath);
+    // Re-read from the server so the editor opens with the same value.
+    setTests(prev => prev.map(t => (t.id === test.id ? { ...t, sdk_path: sdkPath } : t)));
+  }, []);
+
+  const handleDelete = useCallback(async (test: TestCase) => {    if (!window.confirm(`Delete test "${test.title}"?`)) return;
     try {
       await deleteTest(test.id);
       setSelectedIds(prev => { const next = new Set(prev); next.delete(test.id); return next; });
@@ -241,7 +326,7 @@ export default function App() {
   }, []);
 
   // Group tests by category
-  const categories = tests.reduce<Record<string, TestCase[]>>((acc, t) => {
+  const categories = visibleTests.reduce<Record<string, TestCase[]>>((acc, t) => {
     if (!acc[t.category]) acc[t.category] = [];
     acc[t.category].push(t);
     return acc;
@@ -249,7 +334,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="header">
+      <header className="header" ref={headerRef}>
         <div className="header-top">
           <h1>🧪 .NET SDK Test Runner</h1>
           <nav>
@@ -262,19 +347,31 @@ export default function App() {
         {(sdkInfo !== null || sdkList.length > 0) ? (
           <div className="sdk-banner sdk-found">
             <span className="sdk-icon">✓</span>
-            {sdkList.length > 1 ? (
+            {sdkList.length > 0 ? (
               <span className="sdk-text">
                 SDK{' '}
                 <select
                   className="sdk-select"
                   value={selectedSdk}
-                  onChange={(e) => setSelectedSdk(e.target.value)}
+                  onChange={(e) => {
+                    if (e.target.value === PICK_SDK_PATH) {
+                      setSdkPathOpen(true);
+                      setSdkPathError(null);
+                      return;
+                    }
+                    setSelectedSdk(e.target.value);
+                  }}
                 >
                   {sdkList.map(sdk => (
-                    <option key={sdk.version} value={sdk.version}>{sdk.version}</option>
+                    <option key={sdk.version} value={sdk.version}>{sdk.label || sdk.version}</option>
                   ))}
+                  {customSdk && (
+                    <option value={CUSTOM_SDK}>{customSdk.label}</option>
+                  )}
+                  <option value={PICK_SDK_PATH}>📦 Enter .zip or folder path…</option>
                 </select>
                 {(() => {
+                  if (selectedSdk === CUSTOM_SDK && customSdk) return ` | pinned: ${customSdk.root}`;
                   const osMatch = sdkInfo?.match(/OS Name:\s+(.+)/);
                   const ridMatch = sdkInfo?.match(/RID:\s+(\S+)/);
                   return ` | ${osMatch?.[1]?.trim() || 'unknown OS'} | ${ridMatch?.[1] || ''}`;
@@ -290,20 +387,56 @@ export default function App() {
                 })()}
               </span>
             )}
-            <button className="sdk-refresh-btn" onClick={refreshSdk} disabled={sdkLoading}>
-              {sdkLoading ? '⏳' : '↻'} Refresh
-            </button>
+            <div className="sdk-actions">
+              <button className="sdk-refresh-btn" onClick={refreshSdk} disabled={sdkLoading}>
+                {sdkLoading ? '⏳' : '↻'} Refresh
+              </button>
+              <button
+                className="sdk-refresh-btn"
+                onClick={() => setNugetOpen(true)}
+                title="Check the required NuGet feeds are configured (avoids NU1102 restore errors)"
+              >
+                📦 NuGet.Config
+              </button>
+            </div>
+            {sdkPathOpen && (
+              <div className="sdk-path-row">
+                <input
+                  className="sdk-path-input"
+                  autoFocus
+                  value={sdkPathInput}
+                  placeholder="e.g. C:\dotnet-sdk-11.0.100-win-x64.zip — or a folder containing dotnet.exe"
+                  onChange={e => { setSdkPathInput(e.target.value); setSdkPathError(null); }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleUseSdkPath();
+                    if (e.key === 'Escape') setSdkPathOpen(false);
+                  }}
+                />
+                <button className="sdk-refresh-btn" onClick={handleUseSdkPath} disabled={sdkPathBusy || !sdkPathInput.trim()}>
+                  {sdkPathBusy ? '⏳ Resolving…' : 'Use'}
+                </button>
+                <button className="sdk-refresh-btn" onClick={() => setSdkPathOpen(false)} disabled={sdkPathBusy}>Cancel</button>
+                {sdkPathBusy && <span className="sdk-path-note">Extracting a zip SDK can take a minute…</span>}
+                {sdkPathError && <span className="sdk-path-error">⚠ {sdkPathError}</span>}
+              </div>
+            )}
           </div>
         ) : (
           <div className="sdk-banner sdk-missing">
             <span className="sdk-icon">⚠</span>
             <span className="sdk-text">No .NET SDK detected — install one and click Retry</span>
-            <button className="sdk-refresh-btn" onClick={refreshSdk} disabled={sdkLoading}>
-              {sdkLoading ? '⏳' : '↻'} Retry
-            </button>
+            <div className="sdk-actions">
+              <button className="sdk-refresh-btn" onClick={refreshSdk} disabled={sdkLoading}>
+                {sdkLoading ? '⏳' : '↻'} Retry
+              </button>
+              <button className="sdk-refresh-btn" onClick={() => setNugetOpen(true)}>
+                📦 NuGet.Config
+              </button>
+            </div>
           </div>
         )}
       </header>
+      {nugetOpen && <NuGetConfigPanel onClose={() => setNugetOpen(false)} />}
 
       <main className="main">
         {view === 'dashboard' && (
@@ -313,20 +446,48 @@ export default function App() {
         {view === 'tests' && (
           <div className="tests-view">
             <div className="toolbar">
+              <div className="search-box">
+                <span className="search-icon">🔍</span>
+                <input
+                  type="text"
+                  className="search-input"
+                  placeholder="Search tests by name, description, or command…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') setSearch(''); }}
+                />
+                {search && (
+                  <button className="search-clear" title="Clear search" onClick={() => setSearch('')}>✕</button>
+                )}
+              </div>
               <button onClick={() => handleSelectAll()}>Select All</button>
               <button onClick={handleDeselectAll}>Deselect All</button>
               <button className="run-btn" onClick={handleRun} disabled={selectedIds.size === 0 || runStatus === 'running' || checkingCert || pendingRun !== null}>
                 {runStatus === 'running' ? '⏳ Running...' : checkingCert ? '⏳ Checking HTTPS certificate...' : `▶ Run Selected (${selectedIds.size})`}
               </button>
             </div>
-            <TestList
-              categories={categories}
-              selectedIds={selectedIds}
-              onToggle={handleToggle}
-              onSelectCategory={handleSelectAll}
-              onEdit={(t) => { setEditingTest(t); setView('editor'); }}
-              onDelete={handleDelete}
-            />
+            {search && (
+              <p className="search-status">
+                Showing {visibleTests.length} of {tests.length} tests
+                {selectedIds.size > visibleTests.filter(t => selectedIds.has(t.id)).length &&
+                  ' — some selected tests are hidden by the search'}
+              </p>
+            )}
+            {visibleTests.length === 0 ? (
+              <p className="empty-state">
+                {tests.length === 0 ? 'No tests defined yet.' : `No tests match "${search}".`}
+              </p>
+            ) : (
+              <TestList
+                categories={categories}
+                selectedIds={selectedIds}
+                onToggle={handleToggle}
+                onSelectCategory={handleSelectAll}
+                onEdit={(t) => { setEditingTest(t); setView('editor'); }}
+                onDelete={handleDelete}
+                onSdkPathChange={handleSdkPathChange}
+              />
+            )}
           </div>
         )}
 

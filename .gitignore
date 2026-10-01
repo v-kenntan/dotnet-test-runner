@@ -8,3 +8,6 @@ __pycache__/
 .env
 *.Identifier
 .github/copilot-instructions.md
+# Local fallback destination for run exports (see backend/results_export.py)
+results/
+screenshots/

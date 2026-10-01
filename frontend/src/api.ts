@@ -13,6 +13,8 @@ export interface TestCase {
   workload_version?: string | null;
   /** Runs as part of a continuous chain: shared working dir, skipped after a failure. */
   is_continuous?: boolean;
+  /** Needs an SDK folder pinned to be meaningful, so the test list offers the picker inline. */
+  requires_sdk_path?: boolean;
 }
 
 export interface Step {
@@ -70,6 +72,16 @@ export async function deleteTest(id: string): Promise<void> {
   await fetch(`${API_BASE}/tests/${id}`, { method: 'DELETE' });
 }
 
+/** Pin (or clear, with null) one test's SDK folder without touching its steps. */
+export async function setTestSdkPath(id: string, sdkPath: string | null): Promise<void> {
+  const res = await fetch(`${API_BASE}/tests/${id}/sdk-path`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sdk_path: sdkPath }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to save SDK folder');
+}
+
 export async function startExecution(testIds: string[], sdkVersion?: string, sdkPath?: string): Promise<{ run_id: string }> {
   const res = await fetch(`${API_BASE}/execute`, {
     method: 'POST',
@@ -120,6 +132,41 @@ export interface RunScreenshot {
   size: number;
 }
 
+export interface ResultsDestination {
+  root: string;
+  source: string;
+  /** False when results only land on this machine and die with the VM. */
+  persistent: boolean;
+  env_var: string;
+  /** Where the live database (and the run history in it) is kept. */
+  db_path: string;
+  db_source: string;
+  /** False when the history dies with the VM — or with the next rebuild. */
+  db_persistent: boolean;
+  db_env_var: string;
+}
+
+export async function fetchResultsDestination(): Promise<ResultsDestination> {
+  const res = await fetch(`${API_BASE}/results-destination`);
+  return res.json();
+}
+
+export interface ExportResult {
+  exported: boolean;
+  path?: string;
+  root?: string;
+  source?: string;
+  persistent?: boolean;
+  screenshots?: number;
+  db_copied?: boolean;
+  reason?: string;
+}
+
+export async function exportRun(runId: string): Promise<ExportResult> {
+  const res = await fetch(`${API_BASE}/runs/${runId}/export`, { method: 'POST' });
+  return res.json();
+}
+
 export async function fetchScreenshots(runId: string): Promise<RunScreenshot[]> {
   const res = await fetch(`${API_BASE}/runs/${runId}/screenshots`);
   if (!res.ok) return [];
@@ -134,10 +181,69 @@ export async function fetchEnvironment(): Promise<{ output: string; exit_code: n
 export interface SdkEntry {
   version: string;
   path: string;
+  /** Settings-style name, e.g. "11.0.100-preview.7.26381.103 (x64)". */
+  label?: string;
+}
+
+export interface ResolvedSdk {
+  ok: boolean;
+  root?: string;
+  version?: string;
+  label?: string;
+  error?: string;
+}
+
+/** Resolve a typed SDK install folder or .zip into a usable install root. */
+export async function resolveSdkPath(path: string): Promise<ResolvedSdk> {
+  const res = await fetch(`${API_BASE}/sdk-path/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  return res.json();
 }
 
 export async function fetchSdks(): Promise<{ sdks: SdkEntry[]; error?: string }> {
   const res = await fetch(`${API_BASE}/sdks`);
+  return res.json();
+}
+
+/** A NuGet package source, as configured or as required by an SDK. */
+export interface NuGetFeed {
+  key: string;
+  url: string;
+  protocol_version?: string;
+  /** Which SDK this feed is for — one config file is shared across SDKs. */
+  sdk?: string;
+  present?: boolean;
+  disabled?: boolean;
+}
+
+export interface NuGetConfigState {
+  path: string;
+  exists: boolean;
+  error: string | null;
+  sources: NuGetFeed[];
+  required: NuGetFeed[];
+  ok?: boolean;
+  added?: string[];
+  enabled?: string[];
+  backup_path?: string | null;
+}
+
+/** Read the user-level NuGet.Config and which required feeds are missing. */
+export async function fetchNuGetConfig(): Promise<NuGetConfigState> {
+  const res = await fetch(`${API_BASE}/nuget-config`);
+  return res.json();
+}
+
+/** Add (or re-enable) the given package sources in the user-level NuGet.Config. */
+export async function addNuGetFeeds(feeds: NuGetFeed[]): Promise<NuGetConfigState> {
+  const res = await fetch(`${API_BASE}/nuget-config/add`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feeds, backup: true }),
+  });
   return res.json();
 }
 

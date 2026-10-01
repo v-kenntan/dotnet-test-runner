@@ -54,6 +54,7 @@ tests:
     timeout: 300
   - type: command
     command: dotnet workload list
+  requires_sdk_path: true
   sort_order: 20
 - id: workloads-wasm-tools-zip-install
   category: Workloads
@@ -77,6 +78,7 @@ tests:
     timeout: 300
   - type: command
     command: dotnet workload list
+  requires_sdk_path: true
   sort_order: 21
 - id: workloads-scenario-1-search
   category: Workloads
@@ -201,11 +203,22 @@ tests:
       Write-Error 'MonoAOTCompiler.Task Sdk folder not found - is the wasm-tools
       workload installed?'; exit 1 }; Write-Host ('Sdk folder: ' + $sdk);
       Get-ChildItem -LiteralPath $sdk -Force | ForEach-Object { Write-Host (' before:
-      ' + $_.Name) }; Get-ChildItem -LiteralPath $sdk -Force | Remove-Item -Recurse
-      -Force -ErrorAction Stop; if (@(Get-ChildItem -LiteralPath $sdk -Force).Count
-      -ne 0) { Write-Error 'Sdk folder still has files after deletion'; exit 1 };
-      Write-Host 'PASS: Sdk folder emptied - the workload pack is now damaged'; exit
-      0"
+      ' + $_.Name) }; $admin = (New-Object
+      Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);
+      if ($admin) { Get-ChildItem -LiteralPath $sdk -Force | Remove-Item -Recurse
+      -Force -ErrorAction Stop } else { Write-Host 'Not elevated - asking for
+      administrator permission to delete the pack files; approve the UAC prompt to
+      continue'; $q = [char]39; $inner = 'Get-ChildItem -LiteralPath ' + $q + $sdk +
+      $q + ' -Force | Remove-Item -Recurse -Force -ErrorAction Stop'; try {
+      Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList
+      '-NoProfile','-ExecutionPolicy','Bypass','-Command',$inner } catch {
+      Write-Error ('Could not elevate to delete the pack files: ' +
+      $_.Exception.Message); exit 1 } }; $left = @(Get-ChildItem -LiteralPath $sdk
+      -Force); if ($left.Count -ne 0) { Write-Error ('Sdk folder still has ' +
+      $left.Count + ' item(s) after deletion. Deleting files under ' + $r + '
+      requires administrator permission - start the test runner as administrator and
+      run this test again.'); exit 1 }; Write-Host 'PASS: Sdk folder emptied - the
+      workload pack is now damaged'; exit 0"
     assert_output_contains:
     - 'PASS: Sdk folder emptied'
   - type: screenshot
