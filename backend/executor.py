@@ -683,6 +683,26 @@ class TestExecutor:
         write_log("\n" + msg + "\n")
         lines.append("\n" + msg + "\n")
 
+    def _capture_console(self, run_id, result_id, idx, test_name, step) -> None:
+        """Capture the live console after a `screenshot: true` command step, so the
+        command and its output are kept as a checkpoint (issue #77). The console
+        is found by its `title ... - Run <run_id>`. Best-effort, like the other
+        captures: a failure is logged as a warning and never fails the step."""
+        scr = self._screenshot_dir(run_id)
+        if not scr:
+            return
+        slug = lambda s: re.sub(r"[^A-Za-z0-9_-]+", "-", (s or "")).strip("-")
+        label = step.get("label") or "console"
+        base = "-".join(p for p in (slug(test_name), slug(label)) if p) or "console"
+        shot_path = os.path.join(scr, f"{base}-{time.strftime('%Y%m%d-%H%M%S')}.png")
+        if self._capture_screen(shot_path, title_hint=f"Run {run_id}", window_only=True):
+            msg = f"🖼️ Console screenshot: {os.path.basename(shot_path)}"
+        else:
+            msg = f"[warn] Console screenshot failed: {self._last_capture_error or 'window not found'}"
+        self._emit_event(run_id, {
+            "type": "step_output", "result_id": result_id, "step_index": idx, "line": msg,
+        })
+
     def _build_screenshot_script(self, label: str, folder: str, folder_ps: str, delay: float, test_name: str = "",
                                  settings_uri: str = "", search: str = "") -> str:
         """Generate a PowerShell script that opens a window and saves a screenshot
@@ -1653,6 +1673,10 @@ class TestExecutor:
 
                 if cancel_flag.is_set():
                     return (False, had_warnings)
+
+                if (step.get("screenshot") and sys.platform == "win32"
+                        and self._console_procs.get(run_id)):
+                    self._capture_console(run_id, result_id, idx, test_name, step)
 
                 # Emit captured output to the in-app runner
                 if stdout_text:

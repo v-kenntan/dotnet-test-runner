@@ -137,6 +137,23 @@ def _zip_fingerprint(zip_path):
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
 
 
+def _long_path(path):
+    """`path` in Windows extended-length form (``\\\\?\\``), elsewhere unchanged.
+
+    SDK zips contain deeply nested targets files, so an extract under a deep app
+    folder (e.g. ``Downloads\\dotnet-test-runner (1)\\...``) exceeds MAX_PATH and
+    fails with "No such file or directory" unless long paths are enabled machine-wide.
+    """
+    if sys.platform != "win32":
+        return path
+    path = os.path.abspath(path)
+    if path.startswith("\\\\?\\"):
+        return path
+    if path.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + path[2:]
+    return "\\\\?\\" + path
+
+
 def _extract_zip(zip_path, cache_base, log=None):
     """Extract an SDK zip into the cache and return (root, error).
 
@@ -154,24 +171,24 @@ def _extract_zip(zip_path, cache_base, log=None):
                 log(f"Reusing previously extracted SDK: {root}")
             return root, None
         # Marker without a usable payload: start over.
-        shutil.rmtree(dest, ignore_errors=True)
+        shutil.rmtree(_long_path(dest), ignore_errors=True)
 
     if log:
         log(f"Extracting SDK zip to {dest} (this can take a while)...")
     # A partial extract from an earlier failure must not be trusted.
-    shutil.rmtree(dest, ignore_errors=True)
+    shutil.rmtree(_long_path(dest), ignore_errors=True)
     try:
         os.makedirs(dest, exist_ok=True)
         with zipfile.ZipFile(zip_path) as zf:
             # extractall sanitises member paths (absolute paths and "..") itself.
-            zf.extractall(dest)
+            zf.extractall(_long_path(dest))
     except (OSError, zipfile.BadZipFile) as e:
-        shutil.rmtree(dest, ignore_errors=True)
+        shutil.rmtree(_long_path(dest), ignore_errors=True)
         return None, f"could not extract {os.path.basename(zip_path)}: {e}"
 
     root = _find_root(dest)
     if not root:
-        shutil.rmtree(dest, ignore_errors=True)
+        shutil.rmtree(_long_path(dest), ignore_errors=True)
         return None, (
             f"{os.path.basename(zip_path)} does not look like a .NET SDK zip "
             f"(no {os.path.basename(dotnet_exe(''))} inside)"

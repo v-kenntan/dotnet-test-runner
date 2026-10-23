@@ -20,7 +20,9 @@ if %errorlevel% neq 0 goto :pip_fail
 
 echo.
 echo [2/3] Installing PyInstaller...
-pip install pyinstaller
+:: 6.22+ is needed for Python 3.14's Tcl/Tk 9 (library embedded as zipfs);
+:: older versions build an exe that dies on "Tcl data directory ... not found".
+pip install --upgrade "pyinstaller>=6.22"
 if %errorlevel% neq 0 goto :pip_fail
 
 echo.

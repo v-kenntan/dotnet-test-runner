@@ -137,6 +137,11 @@ def init_db():
         conn.execute("ALTER TABLE test_cases ADD COLUMN requires_sdk_path INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # Column already exists
+    # Migrate: same idea for tests that need a workload set version picked inline.
+    try:
+        conn.execute("ALTER TABLE test_cases ADD COLUMN requires_workload_version INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.commit()
     conn.close()
 
@@ -183,7 +188,8 @@ def load_builtin_definitions():
                     """UPDATE test_cases
                           SET category = ?, title = ?, description = ?, steps = ?,
                               is_machine_mutating = ?, sort_order = ?,
-                              is_continuous = ?, requires_sdk_path = ?
+                              is_continuous = ?, requires_sdk_path = ?,
+                              requires_workload_version = ?
                         WHERE id = ? AND is_builtin = 1""",
                     (
                         test.get("category", "General"),
@@ -194,13 +200,14 @@ def load_builtin_definitions():
                         test.get("sort_order", 999),
                         1 if test.get("continuous", False) else 0,
                         1 if test.get("requires_sdk_path", False) else 0,
+                        1 if test.get("requires_workload_version", False) else 0,
                         test_id,
                     ),
                 )
                 continue
             conn.execute(
-                """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path, workload_version, is_continuous, requires_sdk_path)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path, workload_version, is_continuous, requires_sdk_path, requires_workload_version)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     test_id,
                     test.get("category", "General"),
@@ -213,6 +220,7 @@ def load_builtin_definitions():
                     (test.get("workload_version") or None),
                     1 if test.get("continuous", False) else 0,
                     1 if test.get("requires_sdk_path", False) else 0,
+                    1 if test.get("requires_workload_version", False) else 0,
                 ),
             )
     # Prune built-ins whose YAML definition has been removed, so deleting a
@@ -257,6 +265,7 @@ def list_tests():
             "workload_version": row["workload_version"],
             "is_continuous": bool(row["is_continuous"]),
             "requires_sdk_path": bool(row["requires_sdk_path"]),
+            "requires_workload_version": bool(row["requires_workload_version"]),
         })
     return jsonify(tests)
 
@@ -312,26 +321,63 @@ def update_test(test_id):
     return jsonify({"status": "updated"})
 
 
-@app.route("/api/tests/<test_id>/sdk-path", methods=["PUT"])
-def set_test_sdk_path(test_id):
-    """Pin (or clear) one test's SDK folder without rewriting the whole test.
+_INLINE_FIELDS = {"sdk-path": "sdk_path", "workload-version": "workload_version"}
 
-    The test list offers this inline for tests that need a zip SDK, so it must
-    not touch the steps/category the editor owns.
+
+@app.route("/api/tests/<test_id>/<field>", methods=["PUT"])
+def set_test_field(test_id, field):
+    """Set (or clear) one test's SDK folder or workload set version without
+    rewriting the whole test.
+
+    The test list offers these inline, so it must not touch the steps/category
+    the editor owns.
     """
-    sdk_path = (request.json or {}).get("sdk_path")
-    sdk_path = (sdk_path or "").strip() or None
+    column = _INLINE_FIELDS.get(field)
+    if not column:
+        return jsonify({"error": f"Unknown field {field}"}), 404
+    value = ((request.json or {}).get(column) or "").strip() or None
     conn = get_db()
     cur = conn.execute(
-        "UPDATE test_cases SET sdk_path=?, updated_at=datetime('now') WHERE id=?",
-        (sdk_path, test_id),
+        f"UPDATE test_cases SET {column}=?, updated_at=datetime('now') WHERE id=?",
+        (value, test_id),
     )
     conn.commit()
     updated = cur.rowcount
     conn.close()
     if not updated:
         return jsonify({"error": f"Unknown test {test_id}"}), 404
-    return jsonify({"status": "updated", "sdk_path": sdk_path})
+    return jsonify({"status": "updated", column: value})
+
+
+@app.route("/api/workload-versions", methods=["GET"])
+def list_workload_versions():
+    """Workload set versions available for the run's SDK band, for the inline picker.
+
+    Runs `dotnet workload search version` under a global.json pinning the run's
+    SDK version (same as the test steps do), so the list matches its feature band.
+    """
+    _refresh_path()
+    dotnet = _dotnet_exe(request.args.get("sdk_path") or None)
+    sdk_version = request.args.get("sdk_version") or None
+    cmd = [dotnet, "workload", "search", "version", "--take", "20", "--format", "json"]
+    with tempfile.TemporaryDirectory(prefix="wl_versions_") as d:
+        if sdk_version:
+            with open(os.path.join(d, "global.json"), "w") as f:
+                json.dump({"sdk": {"version": sdk_version, "rollForward": "disable"}}, f)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=d,
+                               creationflags=NO_WINDOW)
+        except FileNotFoundError:
+            return jsonify({"versions": [], "error": "dotnet not found in PATH"})
+        except subprocess.TimeoutExpired:
+            return jsonify({"versions": [], "error": "timed out running dotnet workload search version"})
+    try:
+        # Output may be preceded by first-run/telemetry banners; JSON starts at '['.
+        out = r.stdout
+        versions = [v["workloadVersion"] for v in json.loads(out[out.index("["):])]
+    except (ValueError, KeyError, TypeError):
+        return jsonify({"versions": [], "error": (r.stderr or r.stdout or "").strip()[:500]})
+    return jsonify({"versions": versions})
 
 
 @app.route("/api/tests/<test_id>", methods=["DELETE"])
@@ -483,6 +529,10 @@ def stream_execution(run_id):
     return Response(generate(), mimetype="text/event-stream")
 
 
+# The packaged exe has no console, so each dotnet call would flash its own window.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def _refresh_path():
     """Refresh PATH from the registry so newly installed tools are found."""
     machine_path = os.environ.get("PATH", "")
@@ -503,7 +553,8 @@ def get_environment():
     _refresh_path()
     try:
         result = subprocess.run(
-            ["dotnet", "--info"], capture_output=True, text=True, timeout=30
+            ["dotnet", "--info"], capture_output=True, text=True, timeout=30,
+            creationflags=NO_WINDOW,
         )
         # Return stdout even on non-zero exit code; preview SDKs may return
         # non-zero while still printing valid info.
@@ -521,7 +572,8 @@ def list_sdks():
     _refresh_path()
     try:
         result = subprocess.run(
-            ["dotnet", "--list-sdks"], capture_output=True, text=True, timeout=30
+            ["dotnet", "--list-sdks"], capture_output=True, text=True, timeout=30,
+            creationflags=NO_WINDOW,
         )
         # Parse stdout even on non-zero exit code; preview SDKs may return
         # non-zero while still printing valid SDK list.
@@ -566,7 +618,7 @@ def _dev_certs(args, sdk_path=None, timeout=60):
     try:
         result = subprocess.run(
             [_dotnet_exe(sdk_path), "dev-certs", "https"] + args,
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=timeout, creationflags=NO_WINDOW,
         )
         return jsonify({
             "trusted": result.returncode == 0,
@@ -652,6 +704,12 @@ def add_nuget_feeds():
         return jsonify({"ok": False, "error": "no feeds given"})
     result = nuget_config.add_feeds(feeds, backup=bool(body.get("backup", True)))
     return jsonify(result)
+
+
+@app.route("/api/nuget-config/open", methods=["POST"])
+def open_nuget_config():
+    """Open the user-level NuGet.Config in Notepad so testers can paste a full config (issue #76)."""
+    return jsonify(nuget_config.open_in_notepad())
 
 
 @app.route("/api/pick-folder", methods=["POST"])
@@ -807,7 +865,7 @@ def run_app_window():
             "--window-size=1280,800",
             "--no-first-run",
             "--no-default-browser-check",
-        ])
+        ], cwd=tempfile.gettempdir())  # don't pin the app's folder open (see nuget_config)
     except OSError as e:
         print(f"App window unavailable ({e}); falling back to browser.")
         return False

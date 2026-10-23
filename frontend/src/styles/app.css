@@ -365,7 +365,8 @@ body {
   margin-bottom: 0.25rem;
 }
 
-.test-sdk-path .sdk-folder-row input {
+.test-sdk-path .sdk-folder-row input,
+.test-sdk-path .sdk-folder-row select {
   flex: 1;
   min-width: 14rem;
   background: var(--bg);
