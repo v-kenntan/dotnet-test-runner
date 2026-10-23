@@ -9,11 +9,15 @@ tests:
     command: dotnet --info
   - type: command
     command: dotnet workload list
+    screenshot: true
+    label: before-install-maui
   - type: command
     command: dotnet workload install maui --skip-manifest-update
     timeout: 600
   - type: command
     command: dotnet workload list
+    screenshot: true
+    label: after-install-maui
     assert_output_contains:
     - maui
   - type: command
@@ -21,6 +25,8 @@ tests:
     timeout: 600
   - type: command
     command: dotnet workload list
+    screenshot: true
+    label: after-update-maui
   - type: command
     command: dotnet workload uninstall maui
     timeout: 300
@@ -37,11 +43,15 @@ tests:
     command: dotnet --info
   - type: command
     command: dotnet workload list
+    screenshot: true
+    label: before-install-maui
   - type: command
     command: dotnet workload install maui --skip-manifest-update
     timeout: 600
   - type: command
     command: dotnet workload list
+    screenshot: true
+    label: after-install-maui
     assert_output_contains:
     - maui
   - type: command
@@ -49,6 +59,8 @@ tests:
     timeout: 600
   - type: command
     command: dotnet workload list
+    screenshot: true
+    label: after-update-maui
   - type: command
     command: dotnet workload uninstall maui
     timeout: 300
@@ -66,11 +78,15 @@ tests:
     command: dotnet --info
   - type: command
     command: dotnet workload list
+    screenshot: true
+    label: before-install-wasm-tools
   - type: command
     command: dotnet workload install wasm-tools
     timeout: 600
   - type: command
     command: dotnet workload list
+    screenshot: true
+    label: after-install-wasm-tools
     assert_output_contains:
     - wasm-tools
   - type: command
@@ -267,7 +283,8 @@ tests:
   category: Workloads
   title: 'Workload Scenario 3: manifest update, then uninstall the SDK'
   description: >-
-    Install wasm-tools and android *without* --skip-manifest-update so the workload
+    Set the VerifySignatures workload policy and confirm "dotnet workload install
+    wasm-tools --skip-sign-check" is rejected. Then install wasm-tools and android *without* --skip-manifest-update so the workload
     manifests are updated, confirm the new workload version in "dotnet workload
     list", then uninstall the .NET SDK and confirm the dotnet command is gone.
     WARNING: the last steps remove the SDK from this machine - run this case last,
@@ -278,6 +295,34 @@ tests:
     command: dotnet --info
   - type: command
     command: dotnet workload list
+  # Sign verification (issue #79): with the VerifySignatures machine policy set,
+  # --skip-sign-check must be rejected. The policy is left in place; it only
+  # blocks opting out, and signed installs are verified by default anyway.
+  - type: command
+    command: >-
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "$a = @('ADD',
+      'HKLM\SOFTWARE\Policies\Microsoft\dotnet\Workloads', '/v', 'VerifySignatures',
+      '/t', 'REG_DWORD', '/d', '1', '/f'); Write-Host ('REG ' + ($a -join ' '));
+      $admin = (New-Object
+      Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);
+      if ($admin) { & reg.exe @a } else { Write-Host 'Not elevated - asking for
+      administrator permission to set the VerifySignatures policy; approve the UAC
+      prompt to continue'; try { Start-Process -FilePath 'reg.exe' -ArgumentList $a
+      -Verb RunAs -Wait -WindowStyle Hidden } catch { Write-Error ('Could not
+      elevate to set the policy: ' + $_.Exception.Message); exit 1 } }; $v =
+      (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\dotnet\Workloads'
+      -Name VerifySignatures -ErrorAction SilentlyContinue).VerifySignatures;
+      Write-Host ('VerifySignatures = ' + $v); if ($v -ne 1) { Write-Error
+      'VerifySignatures policy is not set to 1'; exit 1 }; Write-Host 'PASS:
+      VerifySignatures policy enabled'; exit 0"
+    assert_output_contains:
+    - 'PASS: VerifySignatures policy enabled'
+  - type: command
+    command: dotnet workload install wasm-tools --skip-sign-check
+    timeout: 300
+    expected_exit_code: 1
+    assert_output_contains:
+    - Unable to bypass signature verification
   - type: command
     command: dotnet workload install wasm-tools
     timeout: 900

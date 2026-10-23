@@ -11,7 +11,10 @@ for and testers can add their own.
 
 import os
 import shutil
+import subprocess
 import sys
+import threading
+import time
 import xml.etree.ElementTree as ET
 
 # Feeds the app offers to add. `sdk` is shown in the UI so a shared config file
@@ -45,6 +48,70 @@ def config_path() -> str:
         return os.path.join(base, "NuGet", "NuGet.Config")
     base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.nuget")
     return os.path.join(base, "NuGet", "NuGet.Config")
+
+
+def open_in_notepad() -> dict:
+    """Open the user-level NuGet.Config in Notepad (issue #76).
+
+    Testers paste a complete feed configuration in, so an empty config is
+    created first when NuGet has not written one yet; otherwise Notepad would
+    offer to create the file in a folder that may not exist.
+    """
+    path = config_path()
+    if sys.platform != "win32":
+        return {"ok": False, "path": path, "error": "opening in Notepad is only supported on Windows"}
+    try:
+        if not os.path.isfile(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(EMPTY_CONFIG)
+        notepad = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "notepad.exe")
+        # cwd: Notepad outlives the app and would otherwise hold the app's
+        # folder open, blocking a rebuild of dist\ (WinError 32).
+        subprocess.Popen([notepad, path], cwd=os.path.dirname(path))
+    except OSError as e:
+        return {"ok": False, "path": path, "error": f"could not open NuGet.Config: {e}"}
+    threading.Thread(target=_raise_notepad, daemon=True).start()
+    return {"ok": True, "path": path, "error": None}
+
+
+def _raise_notepad(timeout: float = 5.0):
+    """Bring the NuGet.Config Notepad window to the front. Windows only.
+
+    The server is a background process, so Windows opens Notepad behind the app
+    window and the click looks like it did nothing. Windows 11 Notepad starts via
+    a stub process, so its window is found by class and title rather than by pid.
+    """
+    import ctypes
+    from executor import _force_foreground
+    user32 = ctypes.windll.user32
+    found = ctypes.c_void_p(0)
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def _visit(hwnd, _lparam):
+        # Match the window class too: a browser tab about NuGet.Config and
+        # Notepad would otherwise match on title alone.
+        cls = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, cls, 64)
+        title = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title, 256)
+        if cls.value == "Notepad" and user32.IsWindowVisible(hwnd) and "NuGet.Config" in title.value:
+            found.value = hwnd
+            return False
+        return True
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        user32.EnumWindows(_visit, 0)
+        if found.value:
+            _force_foreground(found.value)
+            # _force_foreground pins the window topmost (meant for alerts); an
+            # editor must not stay above everything else.
+            HWND_NOTOPMOST, SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = -2, 0x1, 0x2, 0x10
+            user32.SetWindowPos(ctypes.c_void_p(found.value), ctypes.c_void_p(HWND_NOTOPMOST),
+                                0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+            return
+        time.sleep(0.2)
 
 
 def _parse(path: str):

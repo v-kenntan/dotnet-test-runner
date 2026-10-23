@@ -82,7 +82,9 @@ Screenshots are saved under `screenshots/<run_id>/` next to the app's database a
 
 ## NuGet feeds
 
-Restores fail with `NU1102` when the required package sources are missing, which surfaces as a *failed test* rather than as a configuration problem. The **📦 NuGet.Config** button in the SDK banner opens a panel that:
+Restores fail with `NU1102` when the required package sources are missing, which surfaces as a *failed test* rather than as a configuration problem. The **📦 NuGet.Config** button in the SDK banner opens the user-level config (`%APPDATA%\NuGet\NuGet.Config`) directly in Notepad, so a complete feed configuration can be pasted in (issue #76); if NuGet hasn't created the file yet, an empty one is created first.
+
+The **Feeds…** button next to it opens a panel that:
 
 - shows the user-level config path (`%APPDATA%\NuGet\NuGet.Config`) and the sources already in it,
 - flags each required feed as present or missing — including a feed that is configured but sitting in `<disabledPackageSources>`, which restore silently ignores,
@@ -158,11 +160,11 @@ The **Workloads** category mirrors the "Test cases for Workloads" plan:
 
 - **Scenario 1** — inspect `dotnet workload info` / `list` / `search` and verify the MSI `installertype` marker is a 0 KB file.
 - **Scenario 2** — install `wasm-tools` and `android` with `--skip-manifest-update`, publish a Blazor WASM app twice (`-o 1p0` without AOT, then `-o 2p0` with `<RunAOTCompilation>true</RunAOTCompilation>`) and assert the AOT output is larger, then delete the contents of the `MonoAOTCompiler.Task` `Sdk` pack folder, restore it with `dotnet workload repair`, and uninstall both workloads.
-- **Scenario 3** — install the same two workloads **without** `--skip-manifest-update` so the manifests are updated, then uninstall the .NET SDK and assert `dotnet` is no longer available.
+- **Scenario 3** — set the `VerifySignatures` workload policy (`HKLM\SOFTWARE\Policies\Microsoft\dotnet\Workloads`) and assert `dotnet workload install wasm-tools --skip-sign-check` is rejected (issue #79); then install the same two workloads **without** `--skip-manifest-update` so the manifests are updated, then uninstall the .NET SDK and assert `dotnet` is no longer available. The policy is left set: it only stops `--skip-sign-check` from opting out of signature verification.
 
 > **Scenario 3 removes the .NET SDK from the machine.** It is ordered last so that a "run everything" pass does not break the tests behind it, and every later test would fail until the SDK is reinstalled. Run it on a VM you can re-image.
 
-Scenarios 2 and 3 install MSI workloads and (for Scenario 3) run the SDK uninstall bundle, so the runner should be started elevated. Scenario 2 also deletes files under `C:\Program Files\dotnet`; if the runner is not elevated, that step requests administrator permission with a UAC prompt you have to approve for the run to continue.
+Scenarios 2 and 3 install MSI workloads and (for Scenario 3) set a machine policy and run the SDK uninstall bundle, so the runner should be started elevated. Scenario 2 also deletes files under `C:\Program Files\dotnet`; if the runner is not elevated, that step and Scenario 3's policy step request administrator permission with a UAC prompt you have to approve for the run to continue.
 
 ## HTTPS development certificate
 
@@ -183,6 +185,8 @@ Most Workload Set cases act on a **specific workload set version** (`dotnet work
 1. Run **Update to latest workload set**, or any test containing `dotnet workload search version`, and note a version from the output.
 2. Open the test you want in the editor and fill in **Workload set version** (e.g. `8.0.400`).
 3. Run it. Every `{workload_version}` in that test's steps expands to what you entered.
+
+**Install workload with specific version** skips steps 1–2: it carries `requires_workload_version: true` in its YAML, so the test list shows a **Workload set version** dropdown under it. The dropdown is filled from `dotnet workload search version` for the SDK selected in the header (or the test's own SDK folder); ↻ reloads it, and **Other…** takes a version it doesn't list. It writes the same field as the editor.
 
 The field is per test, so **Update workload sets from different band** can hold a version from another feature band (`8.0.3xx` on an `8.0.4xx` SDK, `9.0.2xx` on `9.0.3xx`, `10.0.1xx` on `10.0.2xx`) while the others hold the current band's.
 
@@ -258,6 +262,7 @@ tests:
     machine_mutating: false  # true if it modifies global state
     continuous: false        # true to chain with adjacent continuous tests
     requires_sdk_path: false # true to show the SDK folder picker inline in the test list
+    requires_workload_version: false # true to show the workload set version dropdown inline
     workload_version: ""     # optional seed for {workload_version}
     steps:
       - type: command
@@ -286,12 +291,13 @@ tests:
 | `write_file` | path, content, screenshot, label | Write content to a file |
 | `screenshot` | label, delay, folder / folder_ps / settings_uri + search | Open a folder in Explorer or a Settings page and capture that window (see [Screenshots](#screenshots-evidence-capture)) |
 
-Two flags capture evidence without a dedicated `screenshot` step:
+Three flags capture evidence without a dedicated `screenshot` step:
 
 - `run_timeout: 10` on a `command` step runs a blocking GUI app (WinForms/WPF), leaves the window up for that many seconds, then closes it and passes. Adding `screenshot: true` captures the window before it closes.
+- `screenshot: true` on a plain `command` step captures the live console once the command finishes, so the command and its output are kept as a checkpoint. The **MAUI Workload** tests use it on `dotnet workload list` before install, after install, and after update (issue #77), and **Wasm-tools Workload (zip install)** before and after install (issue #78).
 - `screenshot: true` on a `write_file` step writes the file through Notepad and captures the Notepad window.
 
-Both are Windows-only and are used by the C# WinForms/WPF and xUnit/NUnit/MSTest tests, the VB equivalents, and the **Non-native SDK (x86)** test. An optional `label` names the resulting PNG; it defaults to the project folder (`command`) or the file name (`write_file`), so set it explicitly when one test captures two files with the same name.
+All three are Windows-only and are used by the C# WinForms/WPF and xUnit/NUnit/MSTest tests, the VB equivalents, the **Non-native SDK (x86)** test, and the MAUI and wasm-tools workload tests. An optional `label` names the resulting PNG; it defaults to the project folder (`run_timeout`), `console` (plain `command`), or the file name (`write_file`), so set it explicitly when one test captures two files with the same name.
 
 ### Placeholders
 

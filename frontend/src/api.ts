@@ -15,6 +15,8 @@ export interface TestCase {
   is_continuous?: boolean;
   /** Needs an SDK folder pinned to be meaningful, so the test list offers the picker inline. */
   requires_sdk_path?: boolean;
+  /** Needs a workload set version picked, so the test list offers a dropdown inline. */
+  requires_workload_version?: boolean;
 }
 
 export interface Step {
@@ -80,6 +82,25 @@ export async function setTestSdkPath(id: string, sdkPath: string | null): Promis
     body: JSON.stringify({ sdk_path: sdkPath }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to save SDK folder');
+}
+
+/** Set (or clear, with null) one test's workload set version without touching its steps. */
+export async function setTestWorkloadVersion(id: string, version: string | null): Promise<void> {
+  const res = await fetch(`${API_BASE}/tests/${id}/workload-version`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workload_version: version }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to save workload version');
+}
+
+/** Workload set versions `dotnet workload search version` lists for the given SDK. */
+export async function fetchWorkloadVersions(sdkVersion?: string, sdkPath?: string): Promise<{ versions: string[]; error?: string }> {
+  const q = new URLSearchParams();
+  if (sdkVersion) q.set('sdk_version', sdkVersion);
+  if (sdkPath) q.set('sdk_path', sdkPath);
+  const res = await fetch(`${API_BASE}/workload-versions?${q}`);
+  return res.json();
 }
 
 export async function startExecution(testIds: string[], sdkVersion?: string, sdkPath?: string): Promise<{ run_id: string }> {
@@ -234,6 +255,12 @@ export interface NuGetConfigState {
 /** Read the user-level NuGet.Config and which required feeds are missing. */
 export async function fetchNuGetConfig(): Promise<NuGetConfigState> {
   const res = await fetch(`${API_BASE}/nuget-config`);
+  return res.json();
+}
+
+/** Open the user-level NuGet.Config in Notepad, creating an empty one if missing. */
+export async function openNuGetConfig(): Promise<{ ok: boolean; path: string; error: string | null }> {
+  const res = await fetch(`${API_BASE}/nuget-config/open`, { method: 'POST' });
   return res.json();
 }
 

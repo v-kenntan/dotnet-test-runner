@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, resolveSdkPath, deleteTest, setTestSdkPath, TestRun, fetchRunDetails, fetchDevCertStatus } from './api'
+import { TestCase, StreamEvent, fetchTests, startExecution, cancelExecution, streamExecution, fetchRuns, fetchEnvironment, fetchSdks, SdkEntry, resolveSdkPath, deleteTest, setTestSdkPath, setTestWorkloadVersion, TestRun, fetchRunDetails, fetchDevCertStatus, openNuGetConfig } from './api'
 import { resultLine } from './report'
 import TestList from './components/TestList'
 import TestRunner from './components/TestRunner'
@@ -60,6 +60,16 @@ export default function App() {
   // Missing NuGet feeds make restores fail with NU1102, which looks like a test
   // failure, so the config is editable from the banner (issue #64).
   const [nugetOpen, setNugetOpen] = useState(false);
+  // Testers paste a full feed configuration, so the main button opens the file
+  // itself in Notepad; the panel stays behind "Feeds…" (issue #76).
+  const handleOpenNuGetConfig = async () => {
+    try {
+      const r = await openNuGetConfig();
+      if (!r.ok) alert(r.error || 'Could not open NuGet.Config.');
+    } catch (e) {
+      alert(`Could not open NuGet.Config: ${e}`);
+    }
+  };
   const [runnerTests, setRunnerTests] = useState<TestCase[]>([]);
   const [selectedRun, setSelectedRun] = useState<TestRun | null>(null);
   const [runResults, setRunResults] = useState<any[]>([]);
@@ -315,6 +325,11 @@ export default function App() {
     setTests(prev => prev.map(t => (t.id === test.id ? { ...t, sdk_path: sdkPath } : t)));
   }, []);
 
+  const handleWorkloadVersionChange = useCallback(async (test: TestCase, version: string | null) => {
+    await setTestWorkloadVersion(test.id, version);
+    setTests(prev => prev.map(t => (t.id === test.id ? { ...t, workload_version: version } : t)));
+  }, []);
+
   const handleDelete = useCallback(async (test: TestCase) => {    if (!window.confirm(`Delete test "${test.title}"?`)) return;
     try {
       await deleteTest(test.id);
@@ -393,10 +408,17 @@ export default function App() {
               </button>
               <button
                 className="sdk-refresh-btn"
+                onClick={handleOpenNuGetConfig}
+                title="Open %APPDATA%\NuGet\NuGet.Config in Notepad"
+              >
+                📦 NuGet.Config
+              </button>
+              <button
+                className="sdk-refresh-btn"
                 onClick={() => setNugetOpen(true)}
                 title="Check the required NuGet feeds are configured (avoids NU1102 restore errors)"
               >
-                📦 NuGet.Config
+                Feeds…
               </button>
             </div>
             {sdkPathOpen && (
@@ -429,8 +451,11 @@ export default function App() {
               <button className="sdk-refresh-btn" onClick={refreshSdk} disabled={sdkLoading}>
                 {sdkLoading ? '⏳' : '↻'} Retry
               </button>
-              <button className="sdk-refresh-btn" onClick={() => setNugetOpen(true)}>
+              <button className="sdk-refresh-btn" onClick={handleOpenNuGetConfig}>
                 📦 NuGet.Config
+              </button>
+              <button className="sdk-refresh-btn" onClick={() => setNugetOpen(true)}>
+                Feeds…
               </button>
             </div>
           </div>
@@ -486,6 +511,9 @@ export default function App() {
                 onEdit={(t) => { setEditingTest(t); setView('editor'); }}
                 onDelete={handleDelete}
                 onSdkPathChange={handleSdkPathChange}
+                onWorkloadVersionChange={handleWorkloadVersionChange}
+                runSdkVersion={selectedSdk === CUSTOM_SDK ? customSdk?.version : selectedSdk || undefined}
+                runSdkPath={selectedSdk === CUSTOM_SDK ? customSdk?.root : undefined}
               />
             )}
           </div>

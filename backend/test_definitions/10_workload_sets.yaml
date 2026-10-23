@@ -114,10 +114,11 @@ tests:
   category: Workload Sets
   title: Install workload with specific version (exe)
   description: 'Install a workload at a specific workload set version
-    (`dotnet workload install maui --version <version>`). Requires the
-    "Workload set version" field.'
+    (`dotnet workload install maui --version <version>`). Pick the version in
+    the "Workload set version" box below.'
   machine_mutating: true
   continuous: true
+  requires_workload_version: true
   steps:
   - type: command
     command: dotnet workload search version
