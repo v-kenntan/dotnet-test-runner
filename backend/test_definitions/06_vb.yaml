@@ -32,11 +32,11 @@ tests:
     command: dotnet build
   - type: command
     command: dotnet run
-  sort_order: 13
-- id: vb-12-xunit-nunit-mstest
+  sort_order: 25
+- id: vb-12a-xunit
   category: VB
-  title: 12. VB xUnit/NUnit/MSTest
-  description: Create VB test projects for xUnit, NUnit, and MSTest
+  title: 12a. xUnit
+  description: Create a VB xUnit test project from the default template, then build, restore and run its tests
   steps:
   - type: command
     command: dotnet new xunit -n Myxunit3 -lang vb
@@ -48,8 +48,12 @@ tests:
     command: dotnet restore
   - type: command
     command: dotnet test
-  - type: command
-    command: cd ..
+  sort_order: 26
+- id: vb-12b-nunit
+  category: VB
+  title: 12b. NUnit
+  description: Create a VB NUnit test project from the default template, then build, restore and run its tests
+  steps:
   - type: command
     command: dotnet new nunit -n Mynunit3 -lang vb
   - type: command
@@ -60,8 +64,12 @@ tests:
     command: dotnet restore
   - type: command
     command: dotnet test
-  - type: command
-    command: cd ..
+  sort_order: 27
+- id: vb-12c-mstest
+  category: VB
+  title: 12c. MSTest
+  description: Create a VB MSTest test project from the default template, then build, restore and run its tests
+  steps:
   - type: command
     command: dotnet new mstest -n Mymstest3 -lang vb
   - type: command
@@ -72,11 +80,11 @@ tests:
     command: dotnet restore
   - type: command
     command: dotnet test
-  sort_order: 14
-- id: vb-13-winforms-wpf-build
+  sort_order: 28
+- id: vb-13a-wpf
   category: VB
-  title: 13. VB WinForms/WPF
-  description: Create VB WPF and WinForms apps, build and run them to verify the output windows (each window auto-closes after 10s)
+  title: 13a. WPF
+  description: Create a VB WPF app, build and run it to verify the output window (the window auto-closes after 10s)
   steps:
   - type: command
     command: dotnet new wpf -o mywpf1 -lang vb
@@ -88,8 +96,12 @@ tests:
     command: dotnet run
     run_timeout: 10
     screenshot: true
-  - type: command
-    command: cd ..
+  sort_order: 29
+- id: vb-13b-winforms
+  category: VB
+  title: 13b. WinForms
+  description: Create a VB WinForms app, build and run it to verify the output window (the window auto-closes after 10s)
+  steps:
   - type: command
     command: dotnet new winforms -o w1 -lang vb
   - type: command
@@ -100,4 +112,4 @@ tests:
     command: dotnet run
     run_timeout: 10
     screenshot: true
-  sort_order: 15
+  sort_order: 30

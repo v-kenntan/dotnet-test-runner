@@ -32,7 +32,7 @@ tests:
     timeout: 300
   - type: command
     command: dotnet workload list
-  sort_order: 19
+  sort_order: 34
 - id: workloads-maui-zip-install
   category: Workloads
   title: MAUI Workload (zip install)
@@ -67,7 +67,7 @@ tests:
   - type: command
     command: dotnet workload list
   requires_sdk_path: true
-  sort_order: 20
+  sort_order: 35
 - id: workloads-wasm-tools-zip-install
   category: Workloads
   title: Wasm-tools Workload (zip install)
@@ -95,7 +95,7 @@ tests:
   - type: command
     command: dotnet workload list
   requires_sdk_path: true
-  sort_order: 21
+  sort_order: 36
 - id: workloads-scenario-1-search
   category: Workloads
   title: Workload Scenario 1
@@ -130,7 +130,7 @@ tests:
       (Get-ChildItem (Join-Path $r 'metadata\workloads') -Recurse -Filter msi
       -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq
       'installertype' } | Select-Object -First 1).Directory.FullName
-  sort_order: 22
+  sort_order: 37
 - id: workloads-scenario-2-wasm-android
   category: Workloads
   title: 'Workload Scenario 2: wasm-tools + android'
@@ -278,7 +278,7 @@ tests:
     - 'Successfully uninstalled workload(s): android'
   - type: command
     command: dotnet workload list
-  sort_order: 23
+  sort_order: 38
 - id: workloads-scenario-3-uninstall-sdk
   category: Workloads
   title: 'Workload Scenario 3: manifest update, then uninstall the SDK'
@@ -377,4 +377,4 @@ tests:
       runtime/host is still installed)'; exit 0"
     assert_output_contains:
     - 'PASS: dotnet SDK removed'
-  sort_order: 31
+  sort_order: 53

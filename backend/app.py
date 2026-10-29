@@ -11,7 +11,7 @@ import webbrowser
 import threading
 from flask import Flask, request, jsonify, Response, send_from_directory
 import yaml
-from executor import TestExecutor, sweep_temp_artifacts
+from executor import TestExecutor, sweep_temp_artifacts, machine_arch
 import results_export
 import db_store
 import sdk_source
@@ -79,7 +79,8 @@ def init_db():
             environment_info TEXT,
             summary TEXT,
             sdk_version TEXT,
-            sdk_path TEXT
+            sdk_path TEXT,
+            machine_arch TEXT
         );
         CREATE TABLE IF NOT EXISTS test_results (
             id TEXT PRIMARY KEY,
@@ -115,6 +116,13 @@ def init_db():
         conn.execute("ALTER TABLE test_runs ADD COLUMN sdk_path TEXT")
     except sqlite3.OperationalError:
         pass  # Column already exists
+    # Migrate: add machine_arch column (native CPU architecture of the machine
+    # that ran it). Older runs stay NULL: the history can be shared between
+    # machines, so this machine's architecture can't be assumed for them.
+    try:
+        conn.execute("ALTER TABLE test_runs ADD COLUMN machine_arch TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     # Migrate: add per-test sdk_path column to test_cases
     try:
         conn.execute("ALTER TABLE test_cases ADD COLUMN sdk_path TEXT")
@@ -142,8 +150,22 @@ def init_db():
         conn.execute("ALTER TABLE test_cases ADD COLUMN requires_workload_version INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # Column already exists
+    # Migrate: add the Tests-tab suites a test belongs to (JSON list, e.g.
+    # ["cli", "sanity"]). NULL means the default, ["cli"].
+    try:
+        conn.execute("ALTER TABLE test_cases ADD COLUMN suites TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.commit()
     conn.close()
+
+
+DEFAULT_SUITES = ["cli"]
+
+
+def _suites_json(test):
+    """The Tests tabs (besides "All") a YAML test is listed under."""
+    return json.dumps(test.get("suites") or DEFAULT_SUITES)
 
 
 def load_builtin_definitions():
@@ -189,7 +211,7 @@ def load_builtin_definitions():
                           SET category = ?, title = ?, description = ?, steps = ?,
                               is_machine_mutating = ?, sort_order = ?,
                               is_continuous = ?, requires_sdk_path = ?,
-                              requires_workload_version = ?
+                              requires_workload_version = ?, suites = ?
                         WHERE id = ? AND is_builtin = 1""",
                     (
                         test.get("category", "General"),
@@ -201,13 +223,14 @@ def load_builtin_definitions():
                         1 if test.get("continuous", False) else 0,
                         1 if test.get("requires_sdk_path", False) else 0,
                         1 if test.get("requires_workload_version", False) else 0,
+                        _suites_json(test),
                         test_id,
                     ),
                 )
                 continue
             conn.execute(
-                """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path, workload_version, is_continuous, requires_sdk_path, requires_workload_version)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO test_cases (id, category, title, description, steps, is_builtin, is_machine_mutating, sort_order, sdk_path, workload_version, is_continuous, requires_sdk_path, requires_workload_version, suites)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     test_id,
                     test.get("category", "General"),
@@ -221,6 +244,7 @@ def load_builtin_definitions():
                     1 if test.get("continuous", False) else 0,
                     1 if test.get("requires_sdk_path", False) else 0,
                     1 if test.get("requires_workload_version", False) else 0,
+                    _suites_json(test),
                 ),
             )
     # Prune built-ins whose YAML definition has been removed, so deleting a
@@ -266,6 +290,7 @@ def list_tests():
             "is_continuous": bool(row["is_continuous"]),
             "requires_sdk_path": bool(row["requires_sdk_path"]),
             "requires_workload_version": bool(row["requires_workload_version"]),
+            "suites": json.loads(row["suites"]) if row["suites"] else DEFAULT_SUITES,
         })
     return jsonify(tests)
 
@@ -397,7 +422,7 @@ def list_runs():
     # each row small enough for the client to hold every run and paginate/filter
     # locally instead of round-tripping per page.
     rows = conn.execute(
-        """SELECT id, started_at, finished_at, status, summary, sdk_version, sdk_path
+        """SELECT id, started_at, finished_at, status, summary, sdk_version, sdk_path, machine_arch
            FROM test_runs ORDER BY started_at DESC"""
     ).fetchall()
     conn.close()
@@ -549,8 +574,13 @@ def _refresh_path():
 
 @app.route("/api/environment", methods=["GET"])
 def get_environment():
-    """Get current dotnet environment info."""
+    """Get current dotnet environment info.
+
+    `machine_arch` is the machine's native architecture; the RID inside
+    `output` is the dotnet host's, which differs for a non-native SDK.
+    """
     _refresh_path()
+    arch = machine_arch()
     try:
         result = subprocess.run(
             ["dotnet", "--info"], capture_output=True, text=True, timeout=30,
@@ -559,11 +589,12 @@ def get_environment():
         # Return stdout even on non-zero exit code; preview SDKs may return
         # non-zero while still printing valid info.
         output = result.stdout or result.stderr
-        return jsonify({"output": output, "exit_code": 0 if result.stdout.strip() else result.returncode})
+        return jsonify({"output": output, "exit_code": 0 if result.stdout.strip() else result.returncode,
+                        "machine_arch": arch})
     except FileNotFoundError:
-        return jsonify({"output": "dotnet not found in PATH", "exit_code": -1})
+        return jsonify({"output": "dotnet not found in PATH", "exit_code": -1, "machine_arch": arch})
     except Exception as e:
-        return jsonify({"output": str(e), "exit_code": -1})
+        return jsonify({"output": str(e), "exit_code": -1, "machine_arch": arch})
 
 
 @app.route("/api/sdks", methods=["GET"])

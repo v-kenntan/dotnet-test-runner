@@ -207,6 +207,38 @@ body {
   padding: 0.75rem 0;
 }
 
+/* All / CLI / Sanity Check tabs: their own row above the search and buttons. */
+.toolbar {
+  flex-wrap: wrap;
+}
+
+.suite-tabs {
+  flex-basis: 100%;
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--surface-2);
+  margin-bottom: 0.25rem;
+}
+
+.toolbar .suite-tabs button {
+  background: none;
+  border-radius: 4px 4px 0 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+}
+
+.toolbar .suite-tabs button:hover {
+  color: var(--text);
+}
+
+.toolbar .suite-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
 .toolbar button {
   background: var(--surface-2);
   border: none;

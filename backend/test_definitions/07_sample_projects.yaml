@@ -26,4 +26,4 @@ tests:
     assert_output_contains:
     - Hello, World!
     - Hello from my Net472CL
-  sort_order: 16
+  sort_order: 31

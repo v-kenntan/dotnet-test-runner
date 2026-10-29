@@ -1,6 +1,7 @@
 tests:
 - id: cs-01-dotnet-info
   category: C# Basic
+  suites: [cli, sanity]
   title: 1. Check dotnet info
   description: Verify dotnet SDK is installed and show version info, then capture the
     installed .NET apps in Settings and the SDK folders in File Explorer as additional
@@ -23,6 +24,7 @@ tests:
   sort_order: 1
 - id: cs-02-console-build-run-publish
   category: C# Basic
+  suites: [cli, sanity]
   title: 2. Create C# console app, build, run, publish
   description: Create a new C# console application, build it, run it, and publish it
   steps:

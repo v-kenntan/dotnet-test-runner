@@ -17,6 +17,8 @@ export interface TestCase {
   requires_sdk_path?: boolean;
   /** Needs a workload set version picked, so the test list offers a dropdown inline. */
   requires_workload_version?: boolean;
+  /** Tests tabs (besides "All") the test is listed under, e.g. ["cli", "sanity"]. */
+  suites?: string[];
 }
 
 export interface Step {
@@ -27,6 +29,7 @@ export interface Step {
   timeout?: number;
   expected_exit_code?: number | number[];
   assert_output_contains?: string[];
+  assert_output_matches?: string[];
   continue_on_error?: boolean;
   verify_url?: string;
 }
@@ -41,6 +44,8 @@ export interface TestRun {
   summary: string | null;
   sdk_version: string | null;
   sdk_path: string | null;
+  /** Native CPU architecture of the machine that ran it; null for older runs. */
+  machine_arch?: string | null;
 }
 
 export interface StreamEvent {
@@ -194,7 +199,7 @@ export async function fetchScreenshots(runId: string): Promise<RunScreenshot[]> 
   return res.json();
 }
 
-export async function fetchEnvironment(): Promise<{ output: string; exit_code: number }> {
+export async function fetchEnvironment(): Promise<{ output: string; exit_code: number; machine_arch?: string }> {
   const res = await fetch(`${API_BASE}/environment`);
   return res.json();
 }

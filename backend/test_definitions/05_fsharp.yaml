@@ -57,12 +57,11 @@ tests:
     command: dotnet build
   - type: command
     command: dotnet run
-  sort_order: 10
-- id: fs-09-web-mvc-webapi-build
+  sort_order: 17
+- id: fs-09a-web
   category: F#
-  title: 9. F# web/mvc/webapi apps, run and verify site
-  description: Create F# web, MVC, and WebAPI apps, start each server and verify the
-    hosted site responds
+  title: 9a. Web
+  description: Create an F# web app, start the server and verify the hosted site responds with Hello World
   steps:
   - type: command
     command: dotnet dev-certs https --trust
@@ -82,8 +81,14 @@ tests:
     verify_contains: Hello World
     screenshot: true
     timeout: 300
+  sort_order: 19
+- id: fs-09b-mvc
+  category: F#
+  title: 9b. MVC
+  description: Create an F# MVC app, start the server and verify the hosted site responds
+  steps:
   - type: command
-    command: cd ..
+    command: dotnet dev-certs https --trust
   - type: command
     command: dotnet new mvc -n mymvc2 -lang f#
   - type: command
@@ -99,8 +104,14 @@ tests:
     verify_url: https://localhost:7202
     screenshot: true
     timeout: 300
+  sort_order: 20
+- id: fs-09c-webapi
+  category: F#
+  title: 9c. WebAPI
+  description: Create an F# WebAPI app, start the server and verify the /weatherforecast endpoint responds
+  steps:
   - type: command
-    command: cd ..
+    command: dotnet dev-certs https --trust
   - type: command
     command: dotnet new webapi -o mywebapi2 -lang f#
   - type: command
@@ -116,11 +127,11 @@ tests:
     verify_url: https://localhost:7203/weatherforecast
     screenshot: true
     timeout: 300
-  sort_order: 11
-- id: fs-10-xunit-nunit-mstest
+  sort_order: 21
+- id: fs-10a-xunit
   category: F#
-  title: 10. F# xUnit/NUnit/MSTest
-  description: Create F# test projects for xUnit, NUnit, and MSTest
+  title: 10a. xUnit
+  description: Create an F# xUnit test project from the default template, then build, restore and run its tests
   steps:
   - type: command
     command: dotnet new xunit -n Myxunit2 -lang f#
@@ -132,8 +143,12 @@ tests:
     command: dotnet restore
   - type: command
     command: dotnet test
-  - type: command
-    command: cd ..
+  sort_order: 22
+- id: fs-10b-nunit
+  category: F#
+  title: 10b. NUnit
+  description: Create an F# NUnit test project from the default template, then build, restore and run its tests
+  steps:
   - type: command
     command: dotnet new nunit -n Mynunit2 -lang f#
   - type: command
@@ -144,8 +159,12 @@ tests:
     command: dotnet restore
   - type: command
     command: dotnet test
-  - type: command
-    command: cd ..
+  sort_order: 23
+- id: fs-10c-mstest
+  category: F#
+  title: 10c. MSTest
+  description: Create an F# MSTest test project from the default template, then build, restore and run its tests
+  steps:
   - type: command
     command: dotnet new mstest -n Mymstest2 -lang f#
   - type: command
@@ -156,4 +175,4 @@ tests:
     command: dotnet restore
   - type: command
     command: dotnet test
-  sort_order: 12
+  sort_order: 24

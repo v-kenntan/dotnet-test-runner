@@ -167,6 +167,7 @@ export default function TestEditor({ test, onSave, onCancel }: Props) {
                 <tr><td><code>timeout</code></td><td>number</td><td></td><td>Timeout in seconds (default: 120)</td></tr>
                 <tr><td><code>expected_exit_code</code></td><td>number | number[]</td><td></td><td>Expected exit code(s) (default: 0)</td></tr>
                 <tr><td><code>assert_output_contains</code></td><td>string[]</td><td></td><td>Strings that must appear in stdout</td></tr>
+                <tr><td><code>assert_output_matches</code></td><td>string[]</td><td></td><td>Regexes that must each match stdout (ANSI colours stripped)</td></tr>
                 <tr><td><code>continue_on_error</code></td><td>boolean</td><td></td><td>If true, continue to next step even on failure</td></tr>
               </tbody>
             </table>
@@ -185,7 +186,7 @@ export default function TestEditor({ test, onSave, onCancel }: Props) {
             </table>
 
             <h4>Placeholders</h4>
-            <p>Usable in <code>command</code>, <code>write_file</code> <code>content</code>, and <code>assert_output_contains</code>.</p>
+            <p>Usable in <code>command</code>, <code>write_file</code> <code>content</code>, <code>assert_output_contains</code>, and <code>assert_output_matches</code>.</p>
             <table className="help-table">
               <thead>
                 <tr><th>Placeholder</th><th>Expands to</th></tr>

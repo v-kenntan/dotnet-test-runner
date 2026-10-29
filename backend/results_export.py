@@ -249,6 +249,8 @@ def export_run(run_id, db_path, screenshots_dir, root=None):
         os.makedirs(out_dir, exist_ok=True)
 
         meta = [("Run ID", run["id"]), ("Machine", socket.gethostname())]
+        if "machine_arch" in run.keys() and run["machine_arch"]:
+            meta.append(("Machine Architecture", run["machine_arch"]))
         if run["sdk_version"]:
             meta.append(("SDK Version", run["sdk_version"]))
         if run["sdk_path"]:
