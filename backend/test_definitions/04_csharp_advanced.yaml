@@ -1,6 +1,7 @@
 tests:
 - id: cs-06-multi-tfm-console
   category: C# Advanced
+  suites: [cli, sanity]
   title: 6. Multi-TFM console app
   description: Create a C# console app targeting the selected .NET SDK and net48, then build and run both
   steps:
@@ -33,11 +34,11 @@ tests:
     command: dotnet run -f {tfm}
   - type: command
     command: dotnet run -f net48
-  sort_order: 8
-- id: cs-07-winforms-wpf-build
+  sort_order: 10
+- id: cs-07a-winforms
   category: C# Advanced
-  title: 7. WinForms/WPF apps
-  description: Create WinForms and WPF apps, build and run them to verify the output windows (each window auto-closes after 10s)
+  title: 7a. WinForms
+  description: Create a WinForms app, build and run it to verify the output window (the window auto-closes after 10s)
   steps:
   - type: command
     command: dotnet new winforms -o w
@@ -49,8 +50,12 @@ tests:
     command: dotnet run
     run_timeout: 10
     screenshot: true
-  - type: command
-    command: cd ..
+  sort_order: 11
+- id: cs-07b-wpf
+  category: C# Advanced
+  title: 7b. WPF
+  description: Create a WPF app, build and run it to verify the output window (the window auto-closes after 10s)
+  steps:
   - type: command
     command: dotnet new wpf -o mywpf
   - type: command
@@ -61,4 +66,4 @@ tests:
     command: dotnet run
     run_timeout: 10
     screenshot: true
-  sort_order: 9
+  sort_order: 12

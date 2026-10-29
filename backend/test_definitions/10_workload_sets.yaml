@@ -39,7 +39,7 @@ tests:
     command: dotnet workload --info
   - type: command
     command: dotnet workload list
-  sort_order: 24
+  sort_order: 39
 - id: workload-sets-update-specific-exe
   category: Workload Sets
   title: Update to specific workload set (exe)
@@ -67,7 +67,7 @@ tests:
     command: dotnet workload list
   - type: command
     command: dotnet workload search version
-  sort_order: 25
+  sort_order: 40
 - id: workload-sets-pin-specific-exe
   category: Workload Sets
   title: Pin to specific workload set (exe)
@@ -109,7 +109,7 @@ tests:
     command: dotnet workload --info
     assert_output_contains:
     - '{workload_version}'
-  sort_order: 26
+  sort_order: 41
 - id: workload-sets-install-specific-version-exe
   category: Workload Sets
   title: Install workload with specific version (exe)
@@ -133,7 +133,7 @@ tests:
     - maui
   - type: command
     command: dotnet workload --info
-  sort_order: 27
+  sort_order: 42
 - id: workload-sets-update-different-band-exe
   category: Workload Sets
   title: Update workload sets from different band (exe)
@@ -159,7 +159,7 @@ tests:
     - '{workload_version}'
   - type: command
     command: dotnet workload list
-  sort_order: 28
+  sort_order: 43
 - id: workload-sets-switch-back-manifests-exe
   category: Workload Sets
   title: Switch back to loose manifests (exe)
@@ -177,4 +177,4 @@ tests:
     command: dotnet workload --info
   - type: command
     command: dotnet workload list
-  sort_order: 29
+  sort_order: 44

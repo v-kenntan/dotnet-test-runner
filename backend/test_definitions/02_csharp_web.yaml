@@ -1,9 +1,9 @@
 tests:
-- id: cs-04-web-mvc-webapi-build
+- id: cs-04a-web
   category: C# Web
-  title: 4. Create C# web/mvc/webapi apps, run and verify site
-  description: Create C# web, MVC, and WebAPI apps, start each server and verify the
-    hosted site responds
+  suites: [cli, sanity]
+  title: 4a. Web
+  description: Create a C# web app, start the server and verify the hosted site responds with Hello World
   steps:
   - type: command
     command: dotnet dev-certs https --trust
@@ -23,8 +23,15 @@ tests:
     verify_contains: Hello World
     screenshot: true
     timeout: 300
+  sort_order: 4
+- id: cs-04b-mvc
+  category: C# Web
+  suites: [cli, sanity]
+  title: 4b. MVC
+  description: Create a C# MVC app, start the server and verify the hosted site responds
+  steps:
   - type: command
-    command: cd ..
+    command: dotnet dev-certs https --trust
   - type: command
     command: dotnet new mvc -n mymvc
   - type: command
@@ -40,8 +47,15 @@ tests:
     verify_url: https://localhost:7102
     screenshot: true
     timeout: 300
+  sort_order: 5
+- id: cs-04c-webapi
+  category: C# Web
+  suites: [cli, sanity]
+  title: 4c. WebAPI
+  description: Create a C# WebAPI app, start the server and verify the /weatherforecast endpoint responds
+  steps:
   - type: command
-    command: cd ..
+    command: dotnet dev-certs https --trust
   - type: command
     command: dotnet new webapi -o mywebapi
   - type: command
@@ -57,4 +71,4 @@ tests:
     verify_url: https://localhost:7103/weatherforecast
     screenshot: true
     timeout: 300
-  sort_order: 4
+  sort_order: 6

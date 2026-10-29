@@ -168,7 +168,7 @@ Scenarios 2 and 3 install MSI workloads and (for Scenario 3) set a machine polic
 
 ## HTTPS development certificate
 
-Test cases **4** (C# web/mvc/webapi) and **9** (F# web/mvc/webapi) host HTTPS sites, which requires a trusted ASP.NET Core development certificate. If it is missing, Windows pops a security dialog *while the run is in progress* and the run stalls until someone clicks it.
+Test cases **4a–4c** (C# web/mvc/webapi) and **9a–9c** (F# web/mvc/webapi) host HTTPS sites, which requires a trusted ASP.NET Core development certificate. If it is missing, Windows pops a security dialog *while the run is in progress* and the run stalls until someone clicks it.
 
 To avoid that, the runner checks the certificate **before** starting a run that contains those tests (`dotnet dev-certs https --check --trust`). If it isn't trusted, a prompt appears with three choices:
 
@@ -203,7 +203,7 @@ A non-continuous test ends the sequence; the next continuous test starts a fresh
 
 ## Usage
 
-1. **Select tests** from the left panel (grouped by category)
+1. **Select tests** from the left panel (grouped by category). The **All** / **CLI** / **Sanity Check** tabs above it narrow the list to a suite: **Sanity Check** is the quick pass to run first on a new SDK, and **CLI** is the full set, minus the sanity-only WinForms/WPF publish and F# solution cases
 2. **Click "Run Selected"** to execute
 3. **Watch real-time logs** in the runner view (click a test name to scroll to its output)
 4. **Review results** with pass/fail/skip counts
@@ -264,6 +264,7 @@ tests:
     requires_sdk_path: false # true to show the SDK folder picker inline in the test list
     requires_workload_version: false # true to show the workload set version dropdown inline
     workload_version: ""     # optional seed for {workload_version}
+    suites: [cli]            # Tests tabs it is listed under besides "All": cli and/or sanity (default: [cli])
     steps:
       - type: command
         command: "dotnet new console -o myapp"
@@ -287,7 +288,7 @@ tests:
 
 | Type | Fields | Description |
 |------|--------|-------------|
-| `command` | command, timeout, expected_exit_code, assert_output_contains, continue_on_error, run_timeout, screenshot, label | Execute a CLI command |
+| `command` | command, timeout, expected_exit_code, assert_output_contains, assert_output_matches, continue_on_error, run_timeout, screenshot, label | Execute a CLI command |
 | `write_file` | path, content, screenshot, label | Write content to a file |
 | `screenshot` | label, delay, folder / folder_ps / settings_uri + search | Open a folder in Explorer or a Settings page and capture that window (see [Screenshots](#screenshots-evidence-capture)) |
 
@@ -297,7 +298,7 @@ Three flags capture evidence without a dedicated `screenshot` step:
 - `screenshot: true` on a plain `command` step captures the live console once the command finishes, so the command and its output are kept as a checkpoint. The **MAUI Workload** tests use it on `dotnet workload list` before install, after install, and after update (issue #77), and **Wasm-tools Workload (zip install)** before and after install (issue #78).
 - `screenshot: true` on a `write_file` step writes the file through Notepad and captures the Notepad window.
 
-All three are Windows-only and are used by the C# WinForms/WPF and xUnit/NUnit/MSTest tests, the VB equivalents, the **Non-native SDK (x86)** test, and the MAUI and wasm-tools workload tests. An optional `label` names the resulting PNG; it defaults to the project folder (`run_timeout`), `console` (plain `command`), or the file name (`write_file`), so set it explicitly when one test captures two files with the same name.
+All three are Windows-only and are used by the C# WinForms/WPF and xUnit/NUnit/MSTest tests, the VB equivalents, the **Non-native SDK** tests, and the MAUI and wasm-tools workload tests. An optional `label` names the resulting PNG; it defaults to the project folder (`run_timeout`), `console` (plain `command`), or the file name (`write_file`), so set it explicitly when one test captures two files with the same name.
 
 ### Placeholders
 
@@ -310,7 +311,9 @@ Step `command` and `write_file` `content` support these placeholders:
 | `{assets}` | Path to the bundled read-only `test_assets` folder | — |
 | `{workload_version}` | The test's **Workload set version** field (see below) | `8.0.400` |
 
-Placeholders also expand inside `assert_output_contains`, so a step can assert on the version it was told to install.
+Placeholders also expand inside `assert_output_contains` and `assert_output_matches`, so a step can assert on the version it was told to install.
+
+`assert_output_matches` takes a list of Python regexes, and each one must match the output with ANSI colour codes stripped. Use it when a step expects a non-zero exit code. For example, the xUnit/NUnit/MSTest failing-suite steps expect exit code 1, but an aborted test run (`TESTRUNABORT`) or a compile error also exits with 1. Those steps therefore also require the framework to report the failing test: `(?im)\bfailed:\s*1\b|^\s*Failed \S+ \[`.
 
 `{rid}` is what makes the self-contained publish tests (cases **3** and **16**) work unchanged on both x64 and ARM64 VMs: `dotnet publish -r {rid} --sc` publishes `win-arm64` on an ARM64 machine and `win-x64` on an x64 one, and `cd bin\Release\{tfm}\{rid}\publish` follows the output there.
 

@@ -150,7 +150,7 @@ export default function Dashboard({ runs, onViewRun, onRetryRun, isRunning }: Da
             <>
               <table>
                 <thead>
-                  <tr><th>SDK Version</th><th>Started</th><th>Tests</th><th>Status</th><th>Summary</th><th>Actions</th></tr>
+                  <tr><th>SDK Version</th><th>Machine</th><th>Started</th><th>Tests</th><th>Status</th><th>Summary</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                   {visible.map(run => {
@@ -164,6 +164,9 @@ export default function Dashboard({ runs, onViewRun, onRetryRun, isRunning }: Da
                     return (
                       <tr key={run.id} className="history-row clickable" onClick={() => onViewRun(run)}>
                         <td>{run.sdk_version || 'N/A'}</td>
+                        <td title={run.machine_arch ? undefined : 'Not recorded for runs made before this column was added'}>
+                          {run.machine_arch || '—'}
+                        </td>
                         <td>{formatTime(run.started_at)}</td>
                         <td>{totalTests}</td>
                         <td><span className={`badge badge-${run.status}`}>{run.status}</span></td>

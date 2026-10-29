@@ -29,6 +29,8 @@ ASSETS_DIR = os.path.join(
     "test_assets",
 )
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
 
 def _render_terminal_output(text: str) -> str:
     """Collapse a terminal-logger animation stream into the final rendered
@@ -271,10 +273,39 @@ _ARCH_ALIASES = {
 }
 
 
+_IMAGE_FILE_MACHINE = {0x014C: "x86", 0x8664: "x64", 0x01C4: "arm", 0xAA64: "arm64"}
+
+
+def machine_arch() -> str:
+    """Native CPU architecture of this machine: x64, arm64, x86, ...
+
+    Independent of the SDK: an x86 SDK on an x64 machine still reports x64.
+    On Windows this asks IsWow64Process2 for the native machine, because an
+    x64 build of the app running emulated on Arm64 sees itself as x64.
+    """
+    if sys.platform == "win32":
+        try:
+            from ctypes import wintypes
+            k32 = ctypes.WinDLL("kernel32")
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.IsWow64Process2.argtypes = [
+                wintypes.HANDLE, ctypes.POINTER(wintypes.USHORT), ctypes.POINTER(wintypes.USHORT),
+            ]
+            process_machine, native_machine = wintypes.USHORT(), wintypes.USHORT()
+            if k32.IsWow64Process2(k32.GetCurrentProcess(),
+                                   ctypes.byref(process_machine), ctypes.byref(native_machine)):
+                arch = _IMAGE_FILE_MACHINE.get(native_machine.value)
+                if arch:
+                    return arch
+        except (AttributeError, OSError):
+            pass  # IsWow64Process2 needs Windows 10 1511+
+    arch = (platform.machine() or "").lower()
+    return _ARCH_ALIASES.get(arch, arch or "x64")
+
+
 def _host_rid() -> str:
     """This machine's runtime identifier, e.g. win-x64 / win-arm64."""
-    arch = (platform.machine() or "").lower()
-    arch = _ARCH_ALIASES.get(arch, arch or "x64")
+    arch = machine_arch()
     os_part = {"win32": "win", "darwin": "osx"}.get(sys.platform, "linux")
     return f"{os_part}-{arch}"
 
@@ -345,8 +376,8 @@ class TestExecutor:
 
         conn = get_db()
         conn.execute(
-            "INSERT INTO test_runs (id, started_at, status, sdk_version, sdk_path) VALUES (?, ?, ?, ?, ?)",
-            (run_id, datetime.now().isoformat(), "running", sdk_version, sdk_path),
+            "INSERT INTO test_runs (id, started_at, status, sdk_version, sdk_path, machine_arch) VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, datetime.now().isoformat(), "running", sdk_version, sdk_path, machine_arch()),
         )
         conn.commit()
         conn.close()
@@ -1710,6 +1741,23 @@ class TestExecutor:
                     for pattern in step["assert_output_contains"]:
                         if expand(pattern) not in stdout_text:
                             step_passed = False
+                            break
+
+                # Regex assertions run on colour-stripped output, since SGR codes
+                # can land mid-phrase (e.g. "\x1b[31;1mfailed: 1\x1b[m").
+                if step_passed and "assert_output_matches" in step:
+                    plain = _ANSI_RE.sub("", stdout_text or "")
+                    for pattern in step["assert_output_matches"]:
+                        if not re.search(expand(pattern), plain):
+                            step_passed = False
+                            note = f"Assertion failed: output did not match /{expand(pattern)}/"
+                            stdout_text = f"{stdout_text}\n{note}"
+                            self._emit_event(run_id, {
+                                "type": "step_output",
+                                "result_id": result_id,
+                                "step_index": idx,
+                                "line": note,
+                            })
                             break
 
                 step_warned = step_passed and _detect_warnings(stdout_text)

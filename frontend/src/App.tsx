@@ -14,6 +14,10 @@ import NuGetConfigPanel from './components/NuGetConfigPanel'
 
 type View = 'dashboard' | 'tests' | 'running' | 'history_detail' | 'editor';
 
+// Tests tabs; every tab but "all" shows the tests whose `suites` include its key.
+type SuiteTab = 'all' | 'cli' | 'sanity';
+const SUITE_TABS: [SuiteTab, string][] = [['all', 'All'], ['cli', 'CLI'], ['sanity', 'Sanity Check']];
+
 const BASE_TITLE = '.NET SDK Test Runner';
 
 /** Sentinel option value for an SDK pinned by path rather than discovered. */
@@ -23,6 +27,12 @@ const PICK_SDK_PATH = '__pick_sdk_path__';
 
 /** Steps that host or browse an HTTPS site need a trusted dev certificate. */
 const HTTPS_STEP_RE = /dev-certs\s+https|https:\/\/localhost/i;
+
+// The machine's native architecture and the dotnet host's RID differ for a
+// non-native SDK (e.g. win-x86 on an x64 machine), so show both, labelled.
+function archLabel(machineArch: string | null, rid: string | undefined): string {
+  return `${machineArch ? ` | machine: ${machineArch}` : ''}${rid ? ` | SDK: ${rid}` : ''}`;
+}
 
 function needsDevCert(test: TestCase): boolean {
   return (test.steps || []).some(s => HTTPS_STEP_RE.test(`${s.command || ''} ${s.verify_url || ''}`));
@@ -47,6 +57,7 @@ export default function App() {
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [editingTest, setEditingTest] = useState<TestCase | null>(null);
   const [sdkInfo, setSdkInfo] = useState<string | null>(null);
+  const [machineArch, setMachineArch] = useState<string | null>(null);
   const [sdkLoading, setSdkLoading] = useState(false);
   const [sdkList, setSdkList] = useState<SdkEntry[]>([]);
   const [selectedSdk, setSelectedSdk] = useState<string>('');
@@ -76,6 +87,7 @@ export default function App() {
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
   const [checkingCert, setCheckingCert] = useState(false);
   const [search, setSearch] = useState('');
+  const [suite, setSuite] = useState<SuiteTab>('all');
   const logViewerRef = useRef<LogViewerHandle>(null);
   const headerRef = useRef<HTMLElement>(null);
 
@@ -94,14 +106,19 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  // Tests matching the search box. Matches on what a tester is likely to
-  // remember about a case: its name, what it does, and the commands it runs.
-  // Every whitespace-separated term must match, so "workload repair" narrows
-  // instead of widening.
+  const suiteTests = useMemo(
+    () => suite === 'all' ? tests : tests.filter(t => (t.suites ?? ['cli']).includes(suite)),
+    [tests, suite],
+  );
+
+  // Tests in the current tab matching the search box. Matches on what a tester
+  // is likely to remember about a case: its name, what it does, and the
+  // commands it runs. Every whitespace-separated term must match, so
+  // "workload repair" narrows instead of widening.
   const visibleTests = useMemo(() => {
     const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
-    if (terms.length === 0) return tests;
-    return tests.filter(test => {
+    if (terms.length === 0) return suiteTests;
+    return suiteTests.filter(test => {
       const haystack = [
         test.id,
         test.title,
@@ -111,7 +128,8 @@ export default function App() {
       ].join(' ').toLowerCase();
       return terms.every(term => haystack.includes(term));
     });
-  }, [tests, search]);
+  }, [suiteTests, search]);
+  const hiddenSelected = selectedIds.size - visibleTests.filter(t => selectedIds.has(t.id)).length;
 
   const refreshSdk = useCallback(async () => {
     setSdkLoading(true);
@@ -121,6 +139,7 @@ export default function App() {
       setSdkList(sdks);
       // Only consider SDK "found" if dotnet --info succeeds AND at least one SDK is installed
       setSdkInfo(env.exit_code === 0 && sdks.length > 0 ? env.output : null);
+      setMachineArch(env.machine_arch || null);
       if (sdks.length > 0) {
         setSelectedSdk(prev => prev || sdks[sdks.length - 1].version);
       }
@@ -389,7 +408,7 @@ export default function App() {
                   if (selectedSdk === CUSTOM_SDK && customSdk) return ` | pinned: ${customSdk.root}`;
                   const osMatch = sdkInfo?.match(/OS Name:\s+(.+)/);
                   const ridMatch = sdkInfo?.match(/RID:\s+(\S+)/);
-                  return ` | ${osMatch?.[1]?.trim() || 'unknown OS'} | ${ridMatch?.[1] || ''}`;
+                  return ` | ${osMatch?.[1]?.trim() || 'unknown OS'}${archLabel(machineArch, ridMatch?.[1])}`;
                 })()}
               </span>
             ) : (
@@ -398,7 +417,7 @@ export default function App() {
                   const versionMatch = sdkInfo?.match(/Version:\s+(\S+)/);
                   const osMatch = sdkInfo?.match(/OS Name:\s+(.+)/);
                   const ridMatch = sdkInfo?.match(/RID:\s+(\S+)/);
-                  return `SDK ${versionMatch?.[1] || 'unknown'} | ${osMatch?.[1]?.trim() || 'unknown OS'} | ${ridMatch?.[1] || ''}`;
+                  return `SDK ${versionMatch?.[1] || 'unknown'} | ${osMatch?.[1]?.trim() || 'unknown OS'}${archLabel(machineArch, ridMatch?.[1])}`;
                 })()}
               </span>
             )}
@@ -471,6 +490,19 @@ export default function App() {
         {view === 'tests' && (
           <div className="tests-view">
             <div className="toolbar">
+              <div className="suite-tabs" role="tablist">
+                {SUITE_TABS.map(([key, label]) => (
+                  <button
+                    key={key}
+                    role="tab"
+                    aria-selected={suite === key}
+                    className={suite === key ? 'active' : ''}
+                    onClick={() => setSuite(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="search-box">
                 <span className="search-icon">🔍</span>
                 <input
@@ -491,16 +523,19 @@ export default function App() {
                 {runStatus === 'running' ? '⏳ Running...' : checkingCert ? '⏳ Checking HTTPS certificate...' : `▶ Run Selected (${selectedIds.size})`}
               </button>
             </div>
-            {search && (
+            {(search || hiddenSelected > 0) && (
               <p className="search-status">
-                Showing {visibleTests.length} of {tests.length} tests
-                {selectedIds.size > visibleTests.filter(t => selectedIds.has(t.id)).length &&
-                  ' — some selected tests are hidden by the search'}
+                {search && `Showing ${visibleTests.length} of ${suiteTests.length} tests`}
+                {search && hiddenSelected > 0 && ' — '}
+                {hiddenSelected > 0 &&
+                  `${hiddenSelected} selected test${hiddenSelected > 1 ? 's are' : ' is'} hidden by the ${search ? 'search or tab' : 'tab'} and will still run`}
               </p>
             )}
             {visibleTests.length === 0 ? (
               <p className="empty-state">
-                {tests.length === 0 ? 'No tests defined yet.' : `No tests match "${search}".`}
+                {tests.length === 0 ? 'No tests defined yet.'
+                  : suiteTests.length === 0 ? 'No tests in this tab.'
+                  : `No tests match "${search}".`}
               </p>
             ) : (
               <TestList

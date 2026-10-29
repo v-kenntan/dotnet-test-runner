@@ -1,6 +1,7 @@
 tests:
 - id: cs-05a-xunit-failing-suite
   category: C# Testing
+  suites: [cli, sanity]
   title: 5a. xUnit
   description: Create an xUnit project with passing, failing, and skipped tests
   steps:
@@ -41,9 +42,14 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-  sort_order: 5
+    # Exit code 1 also covers aborted runs and build errors, so require the
+    # framework to have actually reported the one deliberately failing test.
+    assert_output_matches:
+    - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
+  sort_order: 7
 - id: cs-05b-nunit-failing-suite
   category: C# Testing
+  suites: [cli, sanity]
   title: 5b. NUnit
   description: Create an NUnit project with passing, failing, and skipped tests
   steps:
@@ -91,9 +97,14 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-  sort_order: 6
+    # Exit code 1 also covers aborted runs and build errors, so require the
+    # framework to have actually reported the one deliberately failing test.
+    assert_output_matches:
+    - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
+  sort_order: 8
 - id: cs-05c-mstest-failing-suite
   category: C# Testing
+  suites: [cli, sanity]
   title: 5c. MSTest
   description: Create an MSTest project with passing, failing, and inconclusive tests
   steps:
@@ -133,4 +144,8 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-  sort_order: 7
+    # Exit code 1 also covers aborted runs and build errors, so require the
+    # framework to have actually reported the one deliberately failing test.
+    assert_output_matches:
+    - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
+  sort_order: 9

@@ -1,0 +1,202 @@
+# Sanity Check-only tests (not part of the CLI suite). They are listed under
+# their language categories and run in sort_order with everything else.
+tests:
+- id: sanity-13-fsharp-solution
+  category: F#
+  suites: [sanity]
+  title: F# support for .NET projects
+  description: Create a solution with an F# console app that calls an F# .NET class library, which in turn calls an F# .NET Standard 2.1 library, passing a string argument between them; then build and run it
+  steps:
+  - type: command
+    command: dotnet new sln -o Solution3
+  - type: command
+    command: cd Solution3
+  - type: command
+    command: dotnet new console -o myconsole -lang f#
+  - type: command
+    command: dotnet new classlib -o lib1 -lang f#
+  - type: command
+    command: dotnet new classlib -o lib2 -lang f# -f netstandard2.1
+  - type: command
+    command: dotnet sln add myconsole\myconsole.fsproj
+  - type: command
+    command: dotnet sln add lib1\lib1.fsproj
+  - type: command
+    command: dotnet sln add lib2\lib2.fsproj
+  - type: command
+    command: cd lib1
+  - type: command
+    command: dotnet add reference ..\lib2\lib2.fsproj
+  - type: command
+    command: cd ..\myconsole
+  - type: command
+    command: dotnet add reference ..\lib1\lib1.fsproj
+  - type: write_file
+    path: Program.fs
+    screenshot: true
+    label: myconsole-Program
+    content: |
+      // For more information see https://aka.ms/fsharp-console-apps
+      printfn "Hello from F#"
+      lib1.Say1.hello "Kevin"
+  - type: command
+    command: cd ..\lib1
+  - type: write_file
+    path: Library.fs
+    screenshot: true
+    label: lib1-Library
+    content: |
+      namespace lib1
+      open lib2
+      module Say1 =
+          let hello name = Say2.hello name
+  - type: command
+    command: cd ..\lib2
+  - type: write_file
+    path: Library.fs
+    screenshot: true
+    label: lib2-Library
+    content: |
+      namespace lib2
+      module Say2 =
+          let hello name = printfn "Hello %s" name
+  - type: command
+    command: cd ..\myconsole
+  - type: command
+    command: dotnet build
+  - type: command
+    command: dotnet run
+    assert_output_contains: ["Hello from F#", "Hello Kevin"]
+  sort_order: 18
+- id: sanity-18a-winforms-self-contained
+  category: C# Advanced
+  suites: [sanity]
+  title: WinForms app (self-contained publish)
+  description: Create a WinForms app, build and run it, publish it self-contained for this machine's RID (win-x64 or win-arm64), then run the published .dll and .exe (each window is captured and auto-closes after 10s)
+  steps:
+  - type: command
+    command: dotnet new winforms -o self-56
+  - type: command
+    command: cd self-56
+  - type: command
+    command: dotnet build
+  - type: command
+    command: dotnet run
+    run_timeout: 10
+    screenshot: true
+    label: run
+  - type: command
+    command: dotnet publish -r {rid} --sc
+    timeout: 600
+  - type: command
+    command: cd bin\Release\{tfm}-windows\{rid}\publish
+  - type: command
+    command: dotnet self-56.dll
+    run_timeout: 10
+    screenshot: true
+    label: published-dll
+  - type: command
+    command: self-56.exe
+    run_timeout: 10
+    screenshot: true
+    label: published-exe
+  sort_order: 13
+- id: sanity-18b-winforms-framework-dependent
+  category: C# Advanced
+  suites: [sanity]
+  title: WinForms app (framework-dependent publish)
+  description: Create a WinForms app, build and run it, publish it framework-dependent for the selected .NET SDK, then run the published .dll and .exe (each window is captured and auto-closes after 10s)
+  steps:
+  - type: command
+    command: dotnet new winforms -o fx-56
+  - type: command
+    command: cd fx-56
+  - type: command
+    command: dotnet build
+  - type: command
+    command: dotnet run
+    run_timeout: 10
+    screenshot: true
+    label: run
+  - type: command
+    command: dotnet publish -f {tfm}-windows
+    timeout: 600
+  - type: command
+    command: cd bin\Release\{tfm}-windows\publish
+  - type: command
+    command: dotnet fx-56.dll
+    run_timeout: 10
+    screenshot: true
+    label: published-dll
+  - type: command
+    command: fx-56.exe
+    run_timeout: 10
+    screenshot: true
+    label: published-exe
+  sort_order: 14
+- id: sanity-19a-wpf-self-contained
+  category: C# Advanced
+  suites: [sanity]
+  title: WPF app (self-contained publish)
+  description: Create a WPF app, build and run it, publish it self-contained for this machine's RID (win-x64 or win-arm64), then run the published .dll and .exe (each window is captured and auto-closes after 10s)
+  steps:
+  - type: command
+    command: dotnet new wpf -o self-58
+  - type: command
+    command: cd self-58
+  - type: command
+    command: dotnet build
+  - type: command
+    command: dotnet run
+    run_timeout: 10
+    screenshot: true
+    label: run
+  - type: command
+    command: dotnet publish -r {rid} --sc
+    timeout: 600
+  - type: command
+    command: cd bin\Release\{tfm}-windows\{rid}\publish
+  - type: command
+    command: dotnet self-58.dll
+    run_timeout: 10
+    screenshot: true
+    label: published-dll
+  - type: command
+    command: self-58.exe
+    run_timeout: 10
+    screenshot: true
+    label: published-exe
+  sort_order: 15
+- id: sanity-19b-wpf-framework-dependent
+  category: C# Advanced
+  suites: [sanity]
+  title: WPF app (framework-dependent publish)
+  description: Create a WPF app, build and run it, publish it framework-dependent for the selected .NET SDK, then run the published .dll and .exe (each window is captured and auto-closes after 10s)
+  steps:
+  - type: command
+    command: dotnet new wpf -o fx-58
+  - type: command
+    command: cd fx-58
+  - type: command
+    command: dotnet build
+  - type: command
+    command: dotnet run
+    run_timeout: 10
+    screenshot: true
+    label: run
+  - type: command
+    command: dotnet publish -f {tfm}-windows
+    timeout: 600
+  - type: command
+    command: cd bin\Release\{tfm}-windows\publish
+  - type: command
+    command: dotnet fx-58.dll
+    run_timeout: 10
+    screenshot: true
+    label: published-dll
+  - type: command
+    command: fx-58.exe
+    run_timeout: 10
+    screenshot: true
+    label: published-exe
+  sort_order: 16

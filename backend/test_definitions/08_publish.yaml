@@ -24,7 +24,7 @@ tests:
   - type: command
     command: f3.exe
     assert_output_contains: ["Hello, World!"]
-  sort_order: 17
+  sort_order: 32
 - id: publish-16-self-contained
   category: Publish
   title: 16. Self-contained publish
@@ -48,4 +48,4 @@ tests:
     command: dotnet f4.dll
   - type: command
     command: f4.exe
-  sort_order: 18
+  sort_order: 33
