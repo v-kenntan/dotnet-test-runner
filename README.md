@@ -7,7 +7,7 @@ A standalone application for automating .NET SDK test execution on Windows VMs. 
 **Requirements:** Windows 10/11 (x64) + .NET SDK installed
 
 1. Copy the `dotnet-test-runner` folder to your VM
-2. Run `dotnet-test-runner.exe`
+2. Run `dotnet-test-runner.exe` and approve the UAC prompt.
 3. Opens in a dedicated app window (a chromeless Microsoft Edge window — no tabs, no address bar). Falls back to your default browser at http://localhost:5000 if no Edge/Chrome is installed.
 
 To force browser/web mode, set the environment variable `APP_MODE=web` before launching. `APP_MODE=native` (the default) uses the app window.
@@ -164,7 +164,7 @@ The **Workloads** category mirrors the "Test cases for Workloads" plan:
 
 > **Scenario 3 removes the .NET SDK from the machine.** It is ordered last so that a "run everything" pass does not break the tests behind it, and every later test would fail until the SDK is reinstalled. Run it on a VM you can re-image.
 
-Scenarios 2 and 3 install MSI workloads and (for Scenario 3) set a machine policy and run the SDK uninstall bundle, so the runner should be started elevated. Scenario 2 also deletes files under `C:\Program Files\dotnet`; if the runner is not elevated, that step and Scenario 3's policy step request administrator permission with a UAC prompt you have to approve for the run to continue.
+Scenarios 2 and 3 install MSI workloads and (for Scenario 3) set a machine policy and run the SDK uninstall bundle, so they need administrator rights. The packaged exe always starts elevated, so they run without prompting. When running from source (`run.bat` / `python app.py`) in a non-elevated terminal, each MSI workload install shows a ".NET Host" UAC prompt, and Scenario 2's pack-file deletion and Scenario 3's policy step show their own; you have to approve each one for the run to continue.
 
 ## HTTPS development certificate
 
