@@ -12,6 +12,12 @@ A standalone application for automating .NET SDK test execution on Windows VMs. 
 
 To force browser/web mode, set the environment variable `APP_MODE=web` before launching. `APP_MODE=native` (the default) uses the app window.
 
+### Updating
+
+At launch the app checks the latest GitHub release. If it differs from your version, a banner offers **Update**. Click **Check for updates** in the header to check again at any time. The app downloads the new release, replaces its own files, and restarts. Your run history (`test_runner.db`) and SDK zip cache are kept. Update is disabled while a run is active. If the file swap fails, the old files are restored and the app shows "The last update failed" when it restarts.
+
+While the repository is private, the check needs a token: set `GITHUB_TOKEN` (with read access to the repo) before launching. Without it, no banner shows. Versions v1.06 and older have no updater, so download one release by hand to get it.
+
 ## Selecting a specific SDK install (e.g. zip vs. exe)
 
 By default, all `dotnet` commands run against the SDK on the machine's `PATH` (typically the `.exe`/installer SDK under `C:\Program Files\dotnet`). The **SDK dropdown** at the top of the app lists the installs `dotnet --list-sdks` reports, named the way Windows **Settings → Installed apps** names them — architecture and install source included:
@@ -237,6 +243,8 @@ build.bat
 
 Output: `dist/dotnet-test-runner/` folder containing the standalone executable.
 
+Tag the commit first (`git tag v1.07`). `build.bat` stamps that tag into the exe as its version, and stops if the commit has no tag. The in-app updater compares this version with the latest release tag.
+
 ### Rebuilding the Frontend
 
 Only needed if you modify files in `frontend/src/`:
@@ -336,6 +344,7 @@ dotnet-test-runner/
 │   ├── db_store.py         # Where the live database and screenshots are kept
 │   ├── sdk_source.py       # Zip SDK extraction + install-root resolution
 │   ├── nuget_config.py     # NuGet.Config feed inspection and repair
+│   ├── updater.py          # In-app update: release check, download, file swap
 │   ├── test_definitions/   # Built-in YAML test cases
 │   ├── static/             # Pre-built React frontend
 │   └── requirements.txt

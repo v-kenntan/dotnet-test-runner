@@ -14,6 +14,10 @@ if not exist "backend\static\index.html" goto :no_frontend
 python --version >nul 2>nul
 if %errorlevel% neq 0 goto :no_python
 
+:: The in-app update compares this tag with the latest GitHub Release (issue #89).
+git describe --tags --exact-match > backend\version.txt 2>nul
+if %errorlevel% neq 0 goto :no_tag
+
 echo [1/3] Installing backend dependencies...
 pip install -r backend\requirements.txt
 if %errorlevel% neq 0 goto :pip_fail
@@ -53,6 +57,12 @@ exit /b 1
 
 :no_python
 echo ERROR: Python is required. Install from https://python.org
+pause
+exit /b 1
+
+:no_tag
+del backend\version.txt 2>nul
+echo ERROR: HEAD has no git tag. Tag the release first, e.g. "git tag v1.07".
 pause
 exit /b 1
 

@@ -358,6 +358,9 @@ class TestExecutor:
         self._cancel_flags: Dict[str, threading.Event] = {}
         self._console_procs: Dict[str, str] = {}  # run_id -> console_dir path
 
+    def has_active_run(self) -> bool:
+        return bool(self._cancel_flags)
+
     def start_run(self, run_id: str, tests: List[dict], sdk_version: str = None, sdk_path: str = None):
         """Start executing tests in a background thread.
 

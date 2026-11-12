@@ -177,6 +177,27 @@ export async function fetchResultsDestination(): Promise<ResultsDestination> {
   return res.json();
 }
 
+/** `available` is the newer Release tag, or null. */
+export interface UpdateStatus {
+  version: string;
+  available: string | null;
+  /** The last update was rolled back to the old files. */
+  failed: boolean;
+  /** Set when GitHub could not be asked. */
+  error: string | null;
+}
+
+export async function fetchUpdateStatus(): Promise<UpdateStatus> {
+  const res = await fetch(`${API_BASE}/update`);
+  return res.json();
+}
+
+/** Starts the update. On success the app exits and the Updater restarts it. */
+export async function applyUpdate(): Promise<{ tag?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/update`, { method: 'POST' });
+  return res.json();
+}
+
 export interface ExportResult {
   exported: boolean;
   path?: string;
