@@ -29,6 +29,30 @@ ASSETS_DIR = os.path.join(
     "test_assets",
 )
 
+
+def _source_mtimes() -> dict:
+    """mtime of each backend .py and test YAML, so a run can tell the app is stale."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    paths = [os.path.join(base, n) for n in os.listdir(base) if n.endswith(".py")]
+    defs = os.path.join(base, "test_definitions")
+    if os.path.isdir(defs):
+        paths += [os.path.join(defs, n) for n in os.listdir(defs) if n.endswith(".yaml")]
+    return {p: os.path.getmtime(p) for p in paths}
+
+
+# Snapshot at import (dev only; a bundled exe cannot change under itself).
+_LOADED_MTIMES = {} if getattr(sys, "_MEIPASS", None) else _source_mtimes()
+
+
+def _stale_sources() -> list:
+    """Names of source files edited since the app started (dev mode only)."""
+    if not _LOADED_MTIMES:
+        return []
+    now = _source_mtimes()
+    return sorted(os.path.basename(p) for p, m in now.items()
+                  if _LOADED_MTIMES.get(p) != m)
+
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 
@@ -1317,6 +1341,13 @@ class TestExecutor:
             "total_tests": len(tests),
             "environment": env_info,
         })
+        stale = _stale_sources()
+        if stale:
+            self._emit_event(run_id, {
+                "type": "step_output", "result_id": None, "step_index": -1,
+                "line": f"[warn] Changed since the app started: {', '.join(stale)}. "
+                        "Restart the app to run the new code.",
+            })
 
         # Continuous chains (issue #49). Tests marked `continuous` that run
         # back-to-back form one chain: they share a single working directory so
@@ -2125,7 +2156,18 @@ class TestExecutor:
             if cancel_flag.is_set():
                 return ("", "", -1)
             if time.time() > deadline:
-                return ("", "", -1)
+                # Keep what the command printed so far, so a slow step is not
+                # mistaken for a hang (e.g. `dotnet workload install maui`).
+                partial = ""
+                try:
+                    with open(stdout_file, "r", encoding="utf-8", errors="replace") as f:
+                        partial = f.read()
+                except OSError:
+                    pass
+                return (_render_terminal_output(partial),
+                        f"Timed out after {timeout}s. The command is still running in "
+                        "the test console window; wait for it or press Ctrl+C there "
+                        "before the next run.", -1)
             time.sleep(0.5)
 
         # Small delay to ensure files are fully written
@@ -2503,7 +2545,10 @@ class TestExecutor:
                     return ("", "", -1)
                 if time.time() > deadline:
                     proc.terminate()
-                    return ("", "", -1)
+                    return (_render_terminal_output("".join(stdout_lines)),
+                            "".join(stderr_lines) + f"Timed out after {timeout}s. "
+                            f"Stopped the shell (PID {proc.pid}); child processes "
+                            "it started may still be running.", -1)
                 time.sleep(0.1)
 
             t1.join(timeout=5)
