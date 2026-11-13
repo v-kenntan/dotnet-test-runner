@@ -16,6 +16,7 @@ import results_export
 import db_store
 import sdk_source
 import nuget_config
+import updater
 
 
 def get_base_dir():
@@ -37,6 +38,10 @@ DEFINITIONS_DIR = os.path.join(BASE_DIR, "test_definitions")
 # The app's own folder. Stays local even when the DB is kept in OneDrive: it is
 # the base for the extracted-SDK cache, which is far too big to sync.
 APP_DIR = db_store.default_dir()
+
+APP_VERSION = updater.current_version(BASE_DIR)
+# Read once at startup: the banner reports it for this whole launch.
+UPDATE_FAILED = updater.take_failure(APP_DIR)
 
 # Screenshots captured during runs live next to the DB (persistent), one folder
 # per run: <db_dir>/screenshots/<run_id>/*.png
@@ -506,6 +511,43 @@ def results_destination():
     })
 
 
+@app.route("/api/update", methods=["GET"])
+def update_status():
+    """This build's version, the newer Release if any, and whether the last update failed (issue #89)."""
+    try:
+        release, error = updater.check(APP_VERSION), None
+    except Exception:
+        release, error = None, "Could not reach GitHub. Check the network (and GITHUB_TOKEN while the repo is private)."
+    return jsonify({
+        "version": APP_VERSION,
+        "available": release and release["tag"],
+        "failed": UPDATE_FAILED,
+        "error": error,
+    })
+
+
+@app.route("/api/update", methods=["POST"])
+def apply_update():
+    """Download the latest Release, hand off to the Updater, and exit."""
+    if executor.has_active_run():
+        return jsonify({"error": "A test run is active. Wait for it to finish, then update."}), 409
+    # Asked again here, never taken from the request: any local page can POST
+    # to this server, and the URL decides what gets run.
+    try:
+        release = updater.check(APP_VERSION)
+    except Exception:
+        return jsonify({"error": "Could not reach GitHub."}), 502
+    if not release:
+        return jsonify({"error": "No update is available."}), 409
+    try:
+        updater.start(release["asset_url"], APP_DIR, os.getpid())
+    except Exception as e:
+        return jsonify({"error": f"Update failed: {e}"}), 500
+    # The Updater waits for this process to end. The delay lets the response go out.
+    threading.Timer(1.0, os._exit, args=(0,)).start()
+    return jsonify({"tag": release["tag"]})
+
+
 @app.route("/api/runs/<run_id>/export", methods=["POST"])
 def export_run(run_id):
     """Re-export a past run to the results folder. Overwrites its own folder."""
@@ -567,7 +609,8 @@ def _refresh_path():
             machine_path = winreg.QueryValueEx(key, "Path")[0]
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
             user_path = winreg.QueryValueEx(key, "Path")[0]
-        os.environ["PATH"] = machine_path + ";" + user_path
+        # The values are REG_EXPAND_SZ: unexpanded, %SystemRoot%\system32 hides tasklist, ping, etc.
+        os.environ["PATH"] = winreg.ExpandEnvironmentStrings(machine_path + ";" + user_path)
     except Exception:
         pass
 
@@ -917,6 +960,9 @@ if __name__ == "__main__":
     # directories from failed tests that are now older than the cutoff.
     # Backgrounded so a large sweep never delays startup.
     threading.Thread(target=sweep_temp_artifacts, daemon=True).start()
+    # This start worked, so the *.old backup from an update is not needed.
+    if getattr(sys, "_MEIPASS", None):
+        threading.Thread(target=updater.cleanup, args=(APP_DIR,), daemon=True).start()
 
     # APP_MODE=native|web (default: native). native = chromeless GUI window.
     mode = os.environ.get("APP_MODE", "native").strip().lower()

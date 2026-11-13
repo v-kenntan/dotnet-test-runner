@@ -15,6 +15,7 @@ a = Analysis(
         (os.path.join(backend_dir, 'test_definitions'), 'test_definitions'),
         (os.path.join(backend_dir, 'test_assets'), 'test_assets'),
         (os.path.join(backend_dir, 'static'), 'static'),
+        (os.path.join(backend_dir, 'version.txt'), '.'),
     ],
     hiddenimports=[
         'flask',
@@ -25,6 +26,7 @@ a = Analysis(
         'db_store',
         'sdk_source',
         'nuget_config',
+        'updater',
     ],
     hookspath=[],
     hooksconfig={},

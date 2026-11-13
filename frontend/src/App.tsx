@@ -11,6 +11,7 @@ import Dashboard from './components/Dashboard'
 import RunDetail from './components/RunDetail'
 import DevCertPrompt from './components/DevCertPrompt'
 import NuGetConfigPanel from './components/NuGetConfigPanel'
+import UpdateBanner from './components/UpdateBanner'
 
 type View = 'dashboard' | 'tests' | 'running' | 'history_detail' | 'editor';
 
@@ -47,6 +48,7 @@ interface PendingRun {
 
 export default function App() {
   const [view, setView] = useState<View>('dashboard');
+  const [updateChecks, setUpdateChecks] = useState(0);
   const [tests, setTests] = useState<TestCase[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [runId, setRunId] = useState<string | null>(null);
@@ -376,8 +378,10 @@ export default function App() {
             <button className={view === 'tests' ? 'active' : ''} onClick={() => setView('tests')}>Tests</button>
             <button className={view === 'running' ? 'active' : ''} onClick={() => setView('running')}>Runner</button>
             <button className={view === 'editor' ? 'active' : ''} onClick={() => { setEditingTest(null); setView('editor'); }}>+ Add Test</button>
+            <button onClick={() => setUpdateChecks((n) => n + 1)}>Check for updates</button>
           </nav>
         </div>
+        <UpdateBanner isRunning={runStatus === 'running'} checkRequest={updateChecks} />
         {(sdkInfo !== null || sdkList.length > 0) ? (
           <div className="sdk-banner sdk-found">
             <span className="sdk-icon">✓</span>
