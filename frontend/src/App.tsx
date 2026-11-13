@@ -19,8 +19,9 @@ type View = 'dashboard' | 'tests' | 'running' | 'history_detail' | 'editor';
 type SuiteTab = 'all' | 'cli' | 'sanity';
 const SUITE_TABS: [SuiteTab, string][] = [['all', 'All'], ['cli', 'CLI'], ['sanity', 'Sanity Check']];
 
-// Gets the app version once UpdateBanner's launch check returns.
-let BASE_TITLE = '.NET SDK Test Runner';
+const BASE_TITLE = '.NET SDK Test Runner';
+// Gets " (v1.07b)" once UpdateBanner's launch check returns the version.
+let appTitle = BASE_TITLE;
 
 /** Sentinel option value for an SDK pinned by path rather than discovered. */
 const CUSTOM_SDK = '__custom_sdk__';
@@ -50,6 +51,8 @@ interface PendingRun {
 export default function App() {
   const [view, setView] = useState<View>('dashboard');
   const [updateChecks, setUpdateChecks] = useState(0);
+  // Set by UpdateBanner's launch check.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [tests, setTests] = useState<TestCase[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [runId, setRunId] = useState<string | null>(null);
@@ -205,7 +208,7 @@ export default function App() {
     setRunStatus('running');
     setRunnerTests(tests.filter(t => ids.includes(t.id)));
     setView('running');
-    document.title = `⏳ Running — ${BASE_TITLE}`;
+    document.title = `⏳ Running — ${appTitle}`;
 
     const { run_id } = await startExecution(ids, sdkVersion, sdkPath);
     setRunId(run_id);
@@ -236,7 +239,7 @@ export default function App() {
           const cancelled = event.status === 'cancelled';
           const failed = (event.summary as { failed: number }).failed;
           const icon = cancelled ? '⛔' : failed ? '❌' : '✅';
-          document.title = `${icon} Run ${cancelled ? 'cancelled' : 'complete'} — ${BASE_TITLE}`;
+          document.title = `${icon} Run ${cancelled ? 'cancelled' : 'complete'} — ${appTitle}`;
           break;
         }
       }
@@ -373,7 +376,7 @@ export default function App() {
     <div className="app">
       <header className="header" ref={headerRef}>
         <div className="header-top">
-          <h1>🧪 .NET SDK Test Runner</h1>
+          <h1>🧪 .NET SDK Test Runner{appVersion && <span className="app-version"> ({appVersion})</span>}</h1>
           <nav>
             <button className={view === 'dashboard' ? 'active' : ''} onClick={() => setView('dashboard')}>Dashboard</button>
             <button className={view === 'tests' ? 'active' : ''} onClick={() => setView('tests')}>Tests</button>
@@ -386,10 +389,10 @@ export default function App() {
           isRunning={runStatus === 'running'}
           checkRequest={updateChecks}
           onVersion={(v) => {
-            if (BASE_TITLE.endsWith(v)) return;
-            const old = BASE_TITLE;
-            BASE_TITLE = `${old} ${v}`;
-            document.title = document.title.replace(old, BASE_TITLE);
+            const t = `${BASE_TITLE} (${v})`;
+            document.title = document.title.replace(appTitle, t);
+            appTitle = t;
+            setAppVersion(v);
           }}
         />
         {(sdkInfo !== null || sdkList.length > 0) ? (
