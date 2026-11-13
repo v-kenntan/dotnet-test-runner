@@ -645,6 +645,11 @@ body {
   word-break: break-all;
 }
 
+.update-banner {
+  align-items: center;
+  margin: 0.75rem 0 0.25rem;
+}
+
 .results-destination-icon {
   flex-shrink: 0;
 }
