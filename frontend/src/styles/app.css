@@ -51,6 +51,12 @@ body {
   font-size: 1.3rem;
 }
 
+.app-version {
+  font-size: 0.85rem;
+  font-weight: normal;
+  color: var(--text-muted);
+}
+
 .sdk-banner {
   display: flex;
   align-items: center;
