@@ -19,7 +19,8 @@ type View = 'dashboard' | 'tests' | 'running' | 'history_detail' | 'editor';
 type SuiteTab = 'all' | 'cli' | 'sanity';
 const SUITE_TABS: [SuiteTab, string][] = [['all', 'All'], ['cli', 'CLI'], ['sanity', 'Sanity Check']];
 
-const BASE_TITLE = '.NET SDK Test Runner';
+// Gets the app version once UpdateBanner's launch check returns.
+let BASE_TITLE = '.NET SDK Test Runner';
 
 /** Sentinel option value for an SDK pinned by path rather than discovered. */
 const CUSTOM_SDK = '__custom_sdk__';
@@ -381,7 +382,16 @@ export default function App() {
             <button onClick={() => setUpdateChecks((n) => n + 1)}>Check for updates</button>
           </nav>
         </div>
-        <UpdateBanner isRunning={runStatus === 'running'} checkRequest={updateChecks} />
+        <UpdateBanner
+          isRunning={runStatus === 'running'}
+          checkRequest={updateChecks}
+          onVersion={(v) => {
+            if (BASE_TITLE.endsWith(v)) return;
+            const old = BASE_TITLE;
+            BASE_TITLE = `${old} ${v}`;
+            document.title = document.title.replace(old, BASE_TITLE);
+          }}
+        />
         {(sdkInfo !== null || sdkList.length > 0) ? (
           <div className="sdk-banner sdk-found">
             <span className="sdk-icon">✓</span>
