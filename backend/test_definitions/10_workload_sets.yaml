@@ -25,7 +25,8 @@ tests:
     command: dotnet workload list
   - type: command
     command: dotnet workload install maui
-    timeout: 600
+    # MAUI pulls ~40 MSIs; 600s timed out mid-install on a clean machine.
+    timeout: 1800
   - type: command
     command: dotnet workload --info
   - type: command
@@ -34,7 +35,7 @@ tests:
     command: dotnet workload config --update-mode workload-set
   - type: command
     command: dotnet workload update
-    timeout: 600
+    timeout: 1800
   - type: command
     command: dotnet workload --info
   - type: command
@@ -55,10 +56,10 @@ tests:
     command: dotnet workload config --update-mode manifests
   - type: command
     command: dotnet workload update
-    timeout: 600
+    timeout: 1800
   - type: command
     command: dotnet workload update --version {workload_version}
-    timeout: 600
+    timeout: 1800
   - type: command
     command: dotnet workload --info
     assert_output_contains:
@@ -80,29 +81,34 @@ tests:
     command: dotnet workload config --update-mode manifests
   - type: command
     command: dotnet workload update
-    timeout: 600
+    timeout: 1800
   - type: command
     command: mkdir MyTest
   - type: command
     command: cd MyTest
   - type: command
     command: dotnet new global.json --force
-  # The doc says to create global.json and rename "version" to "workloadVersion".
-  # Adding the property in place keeps the SDK pin the runner wrote, and echoing
-  # the file back makes the pinned version visible in the run log.
+  # Same layout as the docs: workloadVersion must sit under "sdk", or the SDK
+  # ignores it (issue #92).
+  # https://learn.microsoft.com/dotnet/core/tools/dotnet-workload-sets#use-globaljson-for-the-workload-set-version
+  - type: write_file
+    path: global.json
+    screenshot: true
+    label: pin-global-json
+    content: |
+      {
+        "sdk": {
+          "workloadVersion": "{workload_version}"
+        }
+      }
   - type: command
-    command: >-
-      powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = 'global.json';
-      $j = Get-Content $p -Raw | ConvertFrom-Json; $j | Add-Member -Force
-      -NotePropertyName workloadVersion -NotePropertyValue '{workload_version}';
-      $j | ConvertTo-Json -Depth 10 | Set-Content $p -Encoding UTF8;
-      Get-Content $p"
+    command: type global.json
     assert_output_contains:
     - workloadVersion
     - '{workload_version}'
   - type: command
     command: dotnet workload update
-    timeout: 600
+    timeout: 1800
   - type: command
     command: dotnet workload list
   - type: command
@@ -149,10 +155,10 @@ tests:
     command: dotnet workload config --update-mode manifests
   - type: command
     command: dotnet workload update
-    timeout: 600
+    timeout: 1800
   - type: command
     command: dotnet workload update --version {workload_version}
-    timeout: 600
+    timeout: 1800
   - type: command
     command: dotnet workload --info
     assert_output_contains:
@@ -172,7 +178,7 @@ tests:
     command: dotnet workload config --update-mode manifests
   - type: command
     command: dotnet workload update
-    timeout: 600
+    timeout: 1800
   - type: command
     command: dotnet workload --info
   - type: command
