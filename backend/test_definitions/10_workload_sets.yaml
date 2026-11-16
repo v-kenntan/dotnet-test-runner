@@ -58,6 +58,10 @@ tests:
     command: dotnet workload update
     timeout: 1800
   - type: command
+    command: dotnet workload --info
+  - type: command
+    command: dotnet workload list
+  - type: command
     command: dotnet workload update --version {workload_version}
     timeout: 1800
   - type: command
@@ -156,6 +160,10 @@ tests:
   - type: command
     command: dotnet workload update
     timeout: 1800
+  - type: command
+    command: dotnet workload --info
+  - type: command
+    command: dotnet workload list
   - type: command
     command: dotnet workload update --version {workload_version}
     timeout: 1800
