@@ -120,7 +120,7 @@ tests:
   category: Workload Sets
   title: Install workload with specific version (exe)
   description: 'Install a workload at a specific workload set version
-    (`dotnet workload install maui --version <version>`). Pick the version in
+    (`dotnet workload install android --version <version>`). Pick the version in
     the "Workload set version" box below.'
   machine_mutating: true
   continuous: true
@@ -131,12 +131,12 @@ tests:
   - type: command
     command: dotnet workload list
   - type: command
-    command: dotnet workload install maui --version {workload_version}
+    command: dotnet workload install android --version {workload_version}
     timeout: 1800
   - type: command
     command: dotnet workload list
     assert_output_contains:
-    - maui
+    - android
   - type: command
     command: dotnet workload --info
   sort_order: 42

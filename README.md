@@ -186,7 +186,7 @@ Runs without HTTPS tests skip the check entirely.
 
 ## Workload sets: selecting the version
 
-Most Workload Set cases act on a **specific workload set version** (`dotnet workload update --version <version>`, `dotnet workload install maui --version <version>`, or a `workloadVersion` pinned in `global.json`). Those versions only exist on the workloads feed, so the runner cannot derive one — you pick it:
+Most Workload Set cases act on a **specific workload set version** (`dotnet workload update --version <version>`, `dotnet workload install android --version <version>`, or a `workloadVersion` pinned in `global.json`). Those versions only exist on the workloads feed, so the runner cannot derive one — you pick it:
 
 1. Run **Update to latest workload set**, or any test containing `dotnet workload search version`, and note a version from the output.
 2. Open the test you want in the editor and fill in **Workload set version** (e.g. `8.0.400`).
