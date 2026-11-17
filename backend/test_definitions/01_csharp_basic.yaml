@@ -3,9 +3,9 @@ tests:
   category: C# Basic
   suites: [cli, sanity]
   title: 1. Check dotnet info
-  description: Verify dotnet SDK is installed and show version info, then capture the
-    installed .NET apps in Settings and the SDK folders in File Explorer as additional
-    checkpoints
+  description: Verify that the dotnet SDK is installed and show version info. Then
+    capture the installed .NET apps in Settings and the SDK folders in File Explorer
+    as additional checkpoints
   steps:
   - type: command
     command: dotnet --info
@@ -54,9 +54,9 @@ tests:
 - id: cs-03-solution-class-libraries
   category: C# Basic
   title: 3. Solution with console + class libraries (.NET & .NET Standard)
-  description: Create a solution with a console app referencing .NET and .NET Standard
-    class libraries, then publish it both self-contained (for this machine's RID) and
-    framework-dependent, running each published app
+  description: Create a solution with a console app that references .NET and .NET
+    Standard class libraries. Publish it self-contained (for this machine's RID) and
+    framework-dependent, then run each published app
   steps:
   - type: command
     command: dotnet new sln -o s1

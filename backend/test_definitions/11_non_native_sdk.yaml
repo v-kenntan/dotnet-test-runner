@@ -54,7 +54,7 @@ tests:
 - id: nonnative-sdk-xunit
   category: Non-native SDK
   title: d. xUnit
-  description: Create an xUnit project with passing, failing, and skipped tests under a non-native SDK; the test source is captured in Notepad
+  description: Create an xUnit project with passing, failing, and skipped tests under a non-native SDK. The test captures the test source in Notepad
   steps:
   - type: command
     command: dotnet --info
@@ -94,15 +94,15 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-    # Exit code 1 also covers aborted runs and build errors, so require the
-    # framework to have actually reported the one deliberately failing test.
+    # Exit code 1 also covers aborted runs and build errors. So require the
+    # framework to report the one test that fails on purpose.
     assert_output_matches:
     - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
   sort_order: 48
 - id: nonnative-sdk-nunit
   category: Non-native SDK
   title: e. NUnit
-  description: Create an NUnit project with passing, failing, and skipped tests under a non-native SDK; the test source is captured in Notepad
+  description: Create an NUnit project with passing, failing, and skipped tests under a non-native SDK. The test captures the test source in Notepad
   steps:
   - type: command
     command: dotnet --info
@@ -149,15 +149,15 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-    # Exit code 1 also covers aborted runs and build errors, so require the
-    # framework to have actually reported the one deliberately failing test.
+    # Exit code 1 also covers aborted runs and build errors. So require the
+    # framework to report the one test that fails on purpose.
     assert_output_matches:
     - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
   sort_order: 49
 - id: nonnative-sdk-mstest
   category: Non-native SDK
   title: f. MSTest
-  description: Create an MSTest project with passing, failing, and inconclusive tests under a non-native SDK; the test source is captured in Notepad
+  description: Create an MSTest project with passing, failing, and inconclusive tests under a non-native SDK. The test captures the test source in Notepad
   steps:
   - type: command
     command: dotnet --info
@@ -198,8 +198,8 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-    # Exit code 1 also covers aborted runs and build errors, so require the
-    # framework to have actually reported the one deliberately failing test.
+    # Exit code 1 also covers aborted runs and build errors. So require the
+    # framework to report the one test that fails on purpose.
     assert_output_matches:
     - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
   sort_order: 50

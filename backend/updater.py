@@ -42,7 +42,8 @@ def _open(url, accept):
     req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "dotnet-test-runner"})
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
     if token:
-        # Unredirected: the asset download redirects to storage that rejects a second auth.
+        # Unredirected header. The asset download redirects to storage that
+        # rejects a second auth.
         req.add_unredirected_header("Authorization", f"Bearer {token}")
     return urllib.request.urlopen(req, timeout=30)
 
@@ -56,7 +57,8 @@ def check(version):
         release = json.load(r)
     tag = release.get("tag_name")
     asset = next((a for a in release.get("assets") or [] if a.get("name") == ASSET), None)
-    # ponytail: "different", not "higher" — marking an older Release as Latest rolls everyone back.
+    # Update when the tag is different, not only when it is higher. So if an older
+    # Release is marked as Latest, everyone rolls back to it.
     if not tag or tag == version or not asset:
         return None
     return {"tag": tag, "asset_url": asset["url"]}
@@ -83,13 +85,13 @@ def updater_script(app_dir, new_dir, pid):
     """The Updater. Swaps only the items in the ZIP, so user data in the App folder stays."""
     lines = [
         "@echo off",
-        # Do not trust the app's PATH: the Updater needs tasklist and ping.
+        # Do not trust the app's PATH. The Updater needs tasklist and ping.
         'set "PATH=%SystemRoot%\\System32;%PATH%"',
         # %% so a '%' in a folder name is not read as a variable.
         f'set "APP={app_dir.replace("%", "%%")}"',
         f'set "NEW={new_dir.replace("%", "%%")}"',
         ":wait",
-        # ping is the sleep: `timeout` fails when there is no console input.
+        # ping is used as the sleep, because `timeout` fails when there is no console input.
         f'tasklist /NH /FI "PID eq {pid}" | find " {pid} " >nul && (ping -n 2 127.0.0.1 >nul & goto wait)',
         "ping -n 3 127.0.0.1 >nul",  # let antivirus/indexers drop their handles
     ]

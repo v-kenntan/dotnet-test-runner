@@ -1,15 +1,15 @@
 """Where the live database (and the screenshots beside it) is kept.
 
 Testers get a fresh VM per .NET build and rebuild the app often, so a database
-sitting next to the exe is wiped by the next build and dies with the VM. When a
-persistent destination is available - OneDrive, a UNC share, or an explicit
-``DTR_RESULTS_DIR`` - the live DB is kept there instead, under ``history/``, so
-run history carries across rebuilds and across VMs.
+sitting next to the exe is wiped by the next build and is lost with the VM. A
+persistent destination is OneDrive, a UNC share, or an explicit
+``DTR_RESULTS_DIR``. When one is available, the live DB is kept there instead,
+under ``history/``, so run history carries across rebuilds and across VMs.
 
-One shared DB, not one per machine: a VM is created per test pass, so a
+There is one shared DB, not one per machine. A VM is created per test pass, so a
 per-machine file would start every pass with an empty history. That is safe
 because only one machine runs at a time. Two machines writing the same OneDrive
-folder concurrently is *not* supported - OneDrive would make conflict copies.
+folder concurrently is *not* supported. OneDrive would make conflict copies.
 
 ``DTR_DB_PATH`` overrides everything with an explicit file path. If the chosen
 destination cannot be written (offline share, read-only folder) the DB falls
@@ -141,11 +141,11 @@ def screenshots_dir():
 
 
 def checkpoint():
-    """Fold the write-ahead log back into the DB file.
+    """Merge the write-ahead log (-wal) back into the DB file.
 
     A synced folder copies each file independently, so a run must not finish
-    with committed pages left in the -wal: OneDrive could upload the .db and
-    the -wal at different times and hand the next VM an inconsistent pair.
+    with committed pages left in the -wal. OneDrive could upload the .db and
+    the -wal at different times and give the next VM a pair that does not match.
     """
     try:
         conn = sqlite3.connect(db_path())

@@ -1,12 +1,12 @@
 """Read and edit the machine's user-level NuGet.Config (issue #64).
 
-Without the required package sources configured, restores fail with `NU1102`
-and tests report a misleading "failed" status, so the app surfaces the file and
-can add the missing feeds itself.
+If the required package sources are not configured, restores fail with `NU1102`
+and tests report a misleading "failed" status. So the app shows the file and can
+add the missing feeds itself.
 
-There is only one user-level NuGet.Config per machine, but which feeds a build
-needs depends on the SDK under test, so every feed carries the SDK it is meant
-for and testers can add their own.
+There is only one user-level NuGet.Config per machine. But the feeds that a
+build needs depend on the SDK under test. So every feed records the SDK it is
+for, and testers can add their own feeds.
 """
 
 import os
@@ -17,8 +17,8 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 
-# Feeds the app offers to add. `sdk` is shown in the UI so a shared config file
-# still makes clear which SDK each source is there for.
+# Feeds the app offers to add. The UI shows `sdk`, so a shared config file
+# still makes clear which SDK each source is for.
 REQUIRED_FEEDS = [
     {
         "key": "azure-default",
@@ -40,8 +40,8 @@ EMPTY_CONFIG = (
 def config_path() -> str:
     """Location of the user-level NuGet.Config.
 
-    NuGet writes it the first time an SDK is used, so it can legitimately be
-    missing on a freshly imaged VM.
+    NuGet writes it the first time an SDK is used, so it can be missing on a
+    freshly imaged VM.
     """
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or os.path.expanduser(r"~\AppData\Roaming")
@@ -53,9 +53,10 @@ def config_path() -> str:
 def open_in_notepad() -> dict:
     """Open the user-level NuGet.Config in Notepad (issue #76).
 
-    Testers paste a complete feed configuration in, so an empty config is
-    created first when NuGet has not written one yet; otherwise Notepad would
-    offer to create the file in a folder that may not exist.
+    Testers paste a complete feed configuration into the file. If NuGet has not
+    written the file yet, this function creates an empty config first.
+    Otherwise Notepad would offer to create the file in a folder that may not
+    exist.
     """
     path = config_path()
     if sys.platform != "win32":
@@ -66,8 +67,8 @@ def open_in_notepad() -> dict:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(EMPTY_CONFIG)
         notepad = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "notepad.exe")
-        # cwd: Notepad outlives the app and would otherwise hold the app's
-        # folder open, blocking a rebuild of dist\ (WinError 32).
+        # Set cwd because Notepad outlives the app. Otherwise Notepad holds the
+        # app's folder open and blocks a rebuild of dist\ (WinError 32).
         subprocess.Popen([notepad, path], cwd=os.path.dirname(path))
     except OSError as e:
         return {"ok": False, "path": path, "error": f"could not open NuGet.Config: {e}"}
@@ -80,7 +81,8 @@ def _raise_notepad(timeout: float = 5.0):
 
     The server is a background process, so Windows opens Notepad behind the app
     window and the click looks like it did nothing. Windows 11 Notepad starts via
-    a stub process, so its window is found by class and title rather than by pid.
+    a stub process, so this function finds its window by class and title, not
+    by pid.
     """
     import ctypes
     from executor import _force_foreground
@@ -89,8 +91,8 @@ def _raise_notepad(timeout: float = 5.0):
 
     @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
     def _visit(hwnd, _lparam):
-        # Match the window class too: a browser tab about NuGet.Config and
-        # Notepad would otherwise match on title alone.
+        # Match the window class too. Otherwise a browser tab about NuGet.Config
+        # and Notepad would match on title alone.
         cls = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(hwnd, cls, 64)
         title = ctypes.create_unicode_buffer(256)
@@ -105,8 +107,8 @@ def _raise_notepad(timeout: float = 5.0):
         user32.EnumWindows(_visit, 0)
         if found.value:
             _force_foreground(found.value)
-            # _force_foreground pins the window topmost (meant for alerts); an
-            # editor must not stay above everything else.
+            # _force_foreground pins the window topmost, which is meant for
+            # alerts. An editor must not stay above all other windows.
             HWND_NOTOPMOST, SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = -2, 0x1, 0x2, 0x10
             user32.SetWindowPos(ctypes.c_void_p(found.value), ctypes.c_void_p(HWND_NOTOPMOST),
                                 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
@@ -132,8 +134,8 @@ def _section(root, name: str, create: bool = False):
 def _disabled_keys(root) -> set:
     """Keys listed under <disabledPackageSources> with value 'true'.
 
-    A source can be present and still unused, which looks identical to a missing
-    feed from the tester's point of view, so it has to be reported separately.
+    A source can be present but unused. To the tester, this looks the same as a
+    missing feed, so the app must report it separately.
     """
     out = set()
     section = _section(root, "disabledPackageSources")
@@ -182,8 +184,8 @@ def read_state() -> dict:
     by_key = {s["key"].lower(): s for s in sources}
     required = []
     for feed in REQUIRED_FEEDS:
-        # Match on URL first: the same feed added under a different key is still
-        # configured, and re-adding it would just create a duplicate source.
+        # Match on URL first. The same feed under a different key is still
+        # configured, and adding it again would create a duplicate source.
         match = by_url.get(feed["url"].rstrip("/").lower()) or by_key.get(feed["key"].lower())
         required.append(dict(
             feed,
@@ -194,7 +196,7 @@ def read_state() -> dict:
 
 
 def add_feeds(feeds: list, backup: bool = True) -> dict:
-    """Add (or re-enable) package sources, creating the file if NuGet has not yet.
+    """Add or re-enable package sources. Create the file if NuGet has not yet.
 
     Returns the same shape as `read_state`, plus `added`/`enabled`/`backup_path`.
     """
@@ -237,8 +239,8 @@ def add_feeds(feeds: list, backup: bool = True) -> dict:
         pv = (feed.get("protocol_version") or "").strip()
         if pv:
             node.set("protocolVersion", pv)
-        # An explicitly disabled source is silently ignored by restore, so adding
-        # it back is only useful if the disable entry goes away too.
+        # Restore ignores a disabled source and gives no warning. So adding the
+        # source back only helps if the disable entry is removed too.
         if disabled_section is not None:
             for bad in [a for a in disabled_section.findall("add")
                         if (a.get("key") or "").strip().lower() == (node.get("key") or "").lower()]:

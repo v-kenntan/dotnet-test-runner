@@ -36,7 +36,7 @@ tests:
 - id: workloads-maui-zip-install
   category: Workloads
   title: MAUI Workload (zip install)
-  description: MAUI workload lifecycle against a zip-installed SDK. Pin the zip SDK's install folder via the "SDK folder" field before running so workloads use the file-based (zip) install type.
+  description: Install, update, list, and uninstall the MAUI workload against a zip-installed SDK. Before running, set the "SDK folder" field to the install folder of the zip SDK. Then the workloads use the file-based (zip) install type.
   machine_mutating: true
   steps:
   - type: command
@@ -71,7 +71,7 @@ tests:
 - id: workloads-wasm-tools-zip-install
   category: Workloads
   title: Wasm-tools Workload (zip install)
-  description: Install and uninstall the wasm-tools workload against a zip-installed SDK. Pin the zip SDK's install folder via the "SDK folder" field before running.
+  description: Install and uninstall the wasm-tools workload against a zip-installed SDK. Before running, set the "SDK folder" field to the install folder of the zip SDK.
   machine_mutating: true
   steps:
   - type: command
@@ -100,7 +100,7 @@ tests:
   category: Workloads
   title: Workload Scenario 1
   description: Inspect workload info, installed workloads, and searchable workload
-    manifests, then verify the workload installer-type marker (MSI) is a 0 KB file
+    manifests. Then verify that the workload installer-type marker (MSI) is a 0 KB file
   machine_mutating: true
   steps:
   - type: command
@@ -135,10 +135,10 @@ tests:
   category: Workloads
   title: 'Workload Scenario 2: wasm-tools + android'
   description: >-
-    Install wasm-tools and android with --skip-manifest-update, publish a Blazor
-    WASM app without AOT (-o 1p0), enable RunAOTCompilation and publish again
-    (-o 2p0), then compare the two outputs. Afterwards delete the contents of the
-    MonoAOTCompiler.Task Sdk pack to damage the workload, restore it with
+    Install wasm-tools and android with --skip-manifest-update. Publish a Blazor
+    WASM app without AOT (-o 1p0). Then enable RunAOTCompilation, publish again
+    (-o 2p0), and compare the two outputs. Next, delete the contents of the
+    MonoAOTCompiler.Task Sdk pack to damage the workload. Restore it with
     "dotnet workload repair", and uninstall both workloads.
   machine_mutating: true
   steps:
@@ -283,21 +283,22 @@ tests:
   category: Workloads
   title: 'Workload Scenario 3: manifest update, then uninstall the SDK'
   description: >-
-    Set the VerifySignatures workload policy and confirm "dotnet workload install
-    wasm-tools --skip-sign-check" is rejected. Then install wasm-tools and android *without* --skip-manifest-update so the workload
-    manifests are updated, confirm the new workload version in "dotnet workload
-    list", then uninstall the .NET SDK and confirm the dotnet command is gone.
-    WARNING: the last steps remove the SDK from this machine - run this case last,
-    on a VM you can re-image.
+    Set the VerifySignatures workload policy and confirm that dotnet rejects
+    "dotnet workload install wasm-tools --skip-sign-check". Then install
+    wasm-tools and android without --skip-manifest-update, so that dotnet updates
+    the workload manifests. Confirm the new workload version in "dotnet workload
+    list". Then uninstall the .NET SDK and confirm that the dotnet command is gone.
+    WARNING: The last steps remove the SDK from this machine. Run this case last,
+    on a VM that you can re-image.
   machine_mutating: true
   steps:
   - type: command
     command: dotnet --info
   - type: command
     command: dotnet workload list
-  # Sign verification (issue #79): with the VerifySignatures machine policy set,
-  # --skip-sign-check must be rejected. The policy is left in place; it only
-  # blocks opting out, and signed installs are verified by default anyway.
+  # Sign verification (issue #79). When the VerifySignatures machine policy is
+  # set, dotnet must reject --skip-sign-check. The test leaves the policy in place.
+  # It only blocks opting out, and dotnet verifies signed installs by default.
   - type: command
     command: >-
       powershell -NoProfile -ExecutionPolicy Bypass -Command "$a = @('ADD',

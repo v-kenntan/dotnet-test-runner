@@ -35,12 +35,12 @@ app.json.sort_keys = False
 DB_PATH = db_store.db_path()
 DEFINITIONS_DIR = os.path.join(BASE_DIR, "test_definitions")
 
-# The app's own folder. Stays local even when the DB is kept in OneDrive: it is
-# the base for the extracted-SDK cache, which is far too big to sync.
+# The app's own folder. It stays local even when the DB is kept in OneDrive,
+# because it is the base for the extracted-SDK cache, which is far too big to sync.
 APP_DIR = db_store.default_dir()
 
 APP_VERSION = updater.current_version(BASE_DIR)
-# Read once at startup: the banner reports it for this whole launch.
+# Read once at startup. The banner reports it for this whole launch.
 UPDATE_FAILED = updater.take_failure(APP_DIR)
 
 # Screenshots captured during runs live next to the DB (persistent), one folder
@@ -53,7 +53,7 @@ def get_db():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     # The DB may sit in a synced folder, where a sync client can hold the file
-    # for a moment. Wait rather than failing the request outright.
+    # for a moment. Wait rather than failing the request at once.
     conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
@@ -116,13 +116,13 @@ def init_db():
         conn.execute("ALTER TABLE test_runs ADD COLUMN sdk_version TEXT")
     except sqlite3.OperationalError:
         pass  # Column already exists
-    # Migrate: add sdk_path column (pinned SDK install folder, e.g. zip install)
+    # Migrate: add sdk_path column (pinned SDK install folder, for example a zip install)
     try:
         conn.execute("ALTER TABLE test_runs ADD COLUMN sdk_path TEXT")
     except sqlite3.OperationalError:
         pass  # Column already exists
     # Migrate: add machine_arch column (native CPU architecture of the machine
-    # that ran it). Older runs stay NULL: the history can be shared between
+    # that ran it). Older runs stay NULL. The history can be shared between
     # machines, so this machine's architecture can't be assumed for them.
     try:
         conn.execute("ALTER TABLE test_runs ADD COLUMN machine_arch TEXT")
@@ -155,7 +155,7 @@ def init_db():
         conn.execute("ALTER TABLE test_cases ADD COLUMN requires_workload_version INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # Column already exists
-    # Migrate: add the Tests-tab suites a test belongs to (JSON list, e.g.
+    # Migrate: add the Tests-tab suites a test belongs to (JSON list, for example
     # ["cli", "sanity"]). NULL means the default, ["cli"].
     try:
         conn.execute("ALTER TABLE test_cases ADD COLUMN suites TEXT")
@@ -202,14 +202,14 @@ def load_builtin_definitions():
             test_id = test["id"]
             yaml_ids.add(test_id)
             if test_id in existing:
-                # Already seeded: refresh the yaml-owned fields so edits to
+                # Already seeded. Refresh the yaml-owned fields so edits to
                 # built-in tests (renames, new steps, re-ordering) reach
-                # existing DBs too. Only built-ins are yaml-owned; user
+                # existing DBs too. Only built-ins are yaml-owned. User
                 # created tests (is_builtin = 0) are left untouched.
-                # workload_version is deliberately NOT refreshed: the tester
+                # workload_version is deliberately NOT refreshed. The tester
                 # types it in the editor before a run, so re-seeding it on every
                 # startup would wipe the version they just selected. sdk_path is
-                # excluded for the same reason - it is pinned per machine, not
+                # excluded for the same reason. It is pinned per machine, not
                 # owned by the yaml.
                 conn.execute(
                     """UPDATE test_cases
@@ -253,8 +253,8 @@ def load_builtin_definitions():
                 ),
             )
     # Prune built-ins whose YAML definition has been removed, so deleting a
-    # definition file actually takes effect on DBs that already seeded it.
-    # Guarded on yaml_ids being non-empty so a missing or unreadable
+    # definition file takes effect on DBs that already seeded it.
+    # The yaml_ids check (must be non-empty) means a missing or unreadable
     # definitions directory can never wipe every built-in test. Past run
     # results are intentionally left alone to preserve history.
     stale = existing - yaml_ids
@@ -387,13 +387,11 @@ def list_workload_versions():
     SDK version (same as the test steps do), so the list matches its feature band.
     """
     _refresh_path()
-    dotnet = _dotnet_exe(request.args.get("sdk_path") or None)
-    sdk_version = request.args.get("sdk_version") or None
-    cmd = [dotnet, "workload", "search", "version", "--take", "20", "--format", "json"]
+    sdk = sdk_source.SdkContext(request.args.get("sdk_path") or None,
+                                request.args.get("sdk_version") or None)
+    cmd = [sdk.dotnet_exe(), "workload", "search", "version", "--take", "20", "--format", "json"]
     with tempfile.TemporaryDirectory(prefix="wl_versions_") as d:
-        if sdk_version:
-            with open(os.path.join(d, "global.json"), "w") as f:
-                json.dump({"sdk": {"version": sdk_version, "rollForward": "disable"}}, f)
+        sdk.write_global_json(d)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=d,
                                creationflags=NO_WINDOW)
@@ -402,7 +400,7 @@ def list_workload_versions():
         except subprocess.TimeoutExpired:
             return jsonify({"versions": [], "error": "timed out running dotnet workload search version"})
     try:
-        # Output may be preceded by first-run/telemetry banners; JSON starts at '['.
+        # First-run or telemetry banners may come before the JSON. The JSON starts at '['.
         out = r.stdout
         versions = [v["workloadVersion"] for v in json.loads(out[out.index("["):])]
     except (ValueError, KeyError, TypeError):
@@ -424,8 +422,8 @@ def list_runs():
     conn = get_db()
     # environment_info holds the full `dotnet --info` output (several KB per run)
     # and the history list never renders it, so it is excluded here. That keeps
-    # each row small enough for the client to hold every run and paginate/filter
-    # locally instead of round-tripping per page.
+    # each row small enough for the client to hold every run and to page and
+    # filter locally, instead of sending a request for each page.
     rows = conn.execute(
         """SELECT id, started_at, finished_at, status, summary, sdk_version, sdk_path, machine_arch
            FROM test_runs ORDER BY started_at DESC"""
@@ -531,8 +529,8 @@ def apply_update():
     """Download the latest Release, hand off to the Updater, and exit."""
     if executor.has_active_run():
         return jsonify({"error": "A test run is active. Wait for it to finish, then update."}), 409
-    # Asked again here, never taken from the request: any local page can POST
-    # to this server, and the URL decides what gets run.
+    # The release is checked again here and never taken from the request. Any
+    # local page can POST to this server, and the URL decides what gets run.
     try:
         release = updater.check(APP_VERSION)
     except Exception:
@@ -565,8 +563,8 @@ def start_execution():
 
     conn = get_db()
     # ORDER BY sort_order so tests always execute in their defined sequence.
-    # Without it SQLite returns rows in arbitrary (rowid) order, so a run could
-    # e.g. install a workload after the test that depends on it.
+    # Without it SQLite returns rows in arbitrary (rowid) order, so a run could,
+    # for example, install a workload after the test that depends on it.
     tests = conn.execute(
         f"SELECT * FROM test_cases WHERE id IN ({','.join('?' * len(test_ids))})"
         " ORDER BY sort_order, category, title",
@@ -609,7 +607,9 @@ def _refresh_path():
             machine_path = winreg.QueryValueEx(key, "Path")[0]
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
             user_path = winreg.QueryValueEx(key, "Path")[0]
-        # The values are REG_EXPAND_SZ: unexpanded, %SystemRoot%\system32 hides tasklist, ping, etc.
+        # The values are REG_EXPAND_SZ. If they are not expanded, the
+        # %SystemRoot%\system32 entry does not resolve, and tools such as tasklist
+        # and ping are not found.
         os.environ["PATH"] = winreg.ExpandEnvironmentStrings(machine_path + ";" + user_path)
     except Exception:
         pass
@@ -677,21 +677,12 @@ def list_sdks():
         return jsonify({"sdks": [], "error": str(e)})
 
 
-def _dotnet_exe(sdk_path=None):
-    """dotnet executable to use: a pinned SDK install root, else the PATH one."""
-    if sdk_path:
-        exe = os.path.join(sdk_path, "dotnet.exe")
-        if os.path.isfile(exe):
-            return exe
-    return "dotnet"
-
-
 def _dev_certs(args, sdk_path=None, timeout=60):
     """Run `dotnet dev-certs https <args>` and report whether the cert is trusted."""
     _refresh_path()
     try:
         result = subprocess.run(
-            [_dotnet_exe(sdk_path), "dev-certs", "https"] + args,
+            [sdk_source.SdkContext(sdk_path).dotnet_exe(), "dev-certs", "https"] + args,
             capture_output=True, text=True, timeout=timeout, creationflags=NO_WINDOW,
         )
         return jsonify({
@@ -713,8 +704,8 @@ def check_dev_certs():
     """Report whether a trusted ASP.NET Core HTTPS development certificate exists.
 
     Tests that host HTTPS sites (test cases 4 and 9) trigger an interactive
-    Windows trust dialog when the certificate is missing or untrusted, which
-    stalls a run midway. The UI checks this before starting a run instead.
+    Windows trust dialog when the certificate is missing or untrusted. The
+    dialog stalls the run midway, so the UI checks this before it starts a run.
     """
     return _dev_certs(["--check", "--trust"], request.args.get("sdk_path") or None)
 
@@ -723,8 +714,8 @@ def check_dev_certs():
 def trust_dev_certs():
     """Run `dotnet dev-certs https --trust` up front, before any test starts.
 
-    Windows shows a security dialog the user has to accept, hence the long
-    timeout — the call blocks until they answer it.
+    Windows shows a security dialog that the user has to accept. The call
+    blocks until they answer it, so the timeout is long.
     """
     sdk_path = (request.json or {}).get("sdk_path") or None
     return _dev_certs(["--trust"], sdk_path, timeout=300)
@@ -734,9 +725,9 @@ def trust_dev_certs():
 def resolve_sdk_path():
     """Turn a typed SDK path into an install root the runner can use.
 
-    Accepts an install folder or a ``.zip`` SDK, which is extracted on first use
-    so testers can point straight at a downloaded zip (issue #74). Extraction of
-    a real SDK zip takes a while, hence the generous timeout on the caller side.
+    Accepts an install folder or a ``.zip`` SDK. A zip is extracted on first use,
+    so testers can point straight at a downloaded zip (issue #74). Extracting a
+    real SDK zip takes a while, so the caller uses a long timeout.
     """
     raw = (request.json or {}).get("path") or ""
     root, error = sdk_source.resolve_sdk_root(raw, APP_DIR)
@@ -749,7 +740,7 @@ def resolve_sdk_path():
             "error": f"dotnet in {root} did not report a version; is it a complete SDK?",
         })
     # Zip SDKs are not registered as installed apps, so they get no Settings-style
-    # name; mark the source instead so it is distinguishable in the picker.
+    # name. Mark the source instead, so the user can tell them apart in the picker.
     is_zip = raw.strip().strip('"').strip("'").lower().endswith(".zip")
     return jsonify({
         "ok": True,
@@ -763,8 +754,8 @@ def resolve_sdk_path():
 def get_nuget_config():
     """Current user-level NuGet.Config sources and which required feeds are missing.
 
-    Missing feeds make restores fail with NU1102, which surfaces as a failed test
-    rather than a configuration problem, so the app reports them up front (issue #64).
+    Missing feeds make restores fail with NU1102. That shows up as a failed test,
+    not as a configuration problem, so the app reports them up front (issue #64).
     """
     return jsonify(nuget_config.read_state())
 
@@ -791,7 +782,7 @@ def pick_folder():
     """Show a native folder-picker so the user can choose an SDK install folder.
 
     Returns the chosen folder and whether it contains a dotnet executable, so the
-    UI can pin a specific SDK install (e.g. a zip-extracted SDK) for a run.
+    UI can pin a specific SDK install (for example, a zip-extracted SDK) for a run.
     """
     def has_dotnet(folder):
         return bool(folder) and os.path.isfile(os.path.join(folder, "dotnet.exe"))
@@ -863,8 +854,8 @@ def start_server():
 APP_URL = "http://127.0.0.1:5000"
 
 # Chromium "--app" mode gives a chromeless window: no tabs, no address bar.
-# ponytail: Edge ships with Windows, so this needs no CLR, no pythonnet and no
-# extra dependency — which is exactly what made issue #57 possible.
+# Edge ships with Windows, so this needs no CLR, no pythonnet and no
+# other dependency. A dependency like pythonnet is what caused issue #57.
 BROWSER_CANDIDATES = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -898,8 +889,8 @@ def wait_for_window_close(profile, timeout=15.0):
     """Block while the app window is open.
 
     Chromium holds an exclusive handle on <profile>/lockfile for its lifetime,
-    so a failed rename means "still running". ponytail: cheaper and more
-    portable than walking the process table for our --user-data-dir.
+    so a failed rename means "still running". This is cheaper and more
+    portable than scanning the process list for our --user-data-dir.
     Returns False if the lock never appeared (nothing to wait on).
     """
     import time
@@ -944,7 +935,7 @@ def run_app_window():
         print(f"App window unavailable ({e}); falling back to browser.")
         return False
     if not wait_for_window_close(profile):
-        # Window is up but unobservable — keep serving rather than exiting.
+        # The window is open, but we cannot observe it. Keep serving rather than exiting.
         threading.Event().wait()
     return True
 
@@ -956,15 +947,15 @@ if __name__ == "__main__":
     init_db()
     load_builtin_definitions()
 
-    # Reclaim temp dirs stranded by earlier crashes, plus retained working
+    # Delete temp dirs left behind by earlier crashes, plus retained working
     # directories from failed tests that are now older than the cutoff.
-    # Backgrounded so a large sweep never delays startup.
+    # This runs in a background thread so a large cleanup never delays startup.
     threading.Thread(target=sweep_temp_artifacts, daemon=True).start()
     # This start worked, so the *.old backup from an update is not needed.
     if getattr(sys, "_MEIPASS", None):
         threading.Thread(target=updater.cleanup, args=(APP_DIR,), daemon=True).start()
 
-    # APP_MODE=native|web (default: native). native = chromeless GUI window.
+    # APP_MODE=native|web (default: native). native opens a chromeless GUI window.
     mode = os.environ.get("APP_MODE", "native").strip().lower()
     if mode not in ("native", "web"):
         print(f"Unknown APP_MODE={mode!r}, falling back to 'native'.")

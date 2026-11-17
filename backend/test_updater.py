@@ -7,7 +7,7 @@ import tempfile
 
 import updater
 
-# Any small exe works as the "app": the script starts it at the end.
+# Any small exe works as the "app". The script starts it at the end.
 FAKE_EXE = os.path.join(os.environ["SystemRoot"], "System32", "hostname.exe")
 DEAD_PID = 99999996
 
