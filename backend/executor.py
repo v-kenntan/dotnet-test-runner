@@ -78,10 +78,10 @@ def _get_screenshots_dir():
 SCREENSHOTS_DIR = _get_screenshots_dir()
 
 
-# Temp artifacts created per test/run. They are removed as soon as they are no
-# longer needed, but a crash or a hard kill can still leave them behind. Working
-# directories for failed tests are also kept on purpose for debugging. The
-# startup sweep limits that growth.
+# Temp artifacts created per test/run. The app deletes them as soon as it no
+# longer needs them, but a crash or a hard kill can still leave them behind. The
+# app also keeps the working directories of failed tests on purpose, for
+# debugging. The startup sweep limits that growth.
 TEMP_PREFIXES = ("dotnet_test_", "test_runner_", "notepad_shot_", "sdk_resolve_",
                  "gui_shot_")
 TEMP_MAX_AGE_HOURS = 24 * 7
@@ -316,8 +316,8 @@ class _RunDesktop:
 
     def capture_console(self, screenshot_path):
         """Capture the live console after a `screenshot: true` command step, so
-        the command and its output are kept as a checkpoint (issue #77). The
-        console is found by its `title ... - Run <run_id>`."""
+        the command and its output stay as a checkpoint (issue #77). The code
+        finds the console by its `title ... - Run <run_id>`."""
         if not self._ex._console_procs.get(self._run_id):
             return "no console window"
         return self._ex._capture_screen(
@@ -345,8 +345,8 @@ class TestExecutor:
 
         sdk_path, when provided, is the install root (folder containing dotnet.exe)
         of a specific .NET SDK, for example a zip-extracted SDK. All dotnet commands
-        for the run use that install (through DOTNET_ROOT and PATH). So the run tests
-        zip/file-based workload installs instead of the PATH default.
+        for the run use that install (through DOTNET_ROOT and PATH). This lets the
+        run test zip/file-based workload installs instead of the SDK on PATH.
         """
         cancel_flag = threading.Event()
         self._cancel_flags[run_id] = cancel_flag
@@ -372,10 +372,10 @@ class TestExecutor:
     def _resolve_pinned_root(self, run_id: str, raw: str, what: str):
         """Resolve a pinned SDK path to an install root, or None if unusable.
 
-        A plain folder is returned as-is. A ``.zip`` SDK is extracted on first
-        use, so the user can pin a zip directly instead of unzipping it by hand
-        (issue #74). Progress and failures are logged to the run, because
-        extracting a real SDK zip is slow. Without the log, it can look like a hang.
+        Returns a plain folder as-is. Extracts a ``.zip`` SDK on first use,
+        so the user can pin a zip directly instead of unzipping it by hand
+        (issue #74). Logs progress and failures to the run, because extracting
+        a real SDK zip is slow. Without the log, it can look like a hang.
         """
         raw = (raw or "").strip()
         if not raw:
@@ -387,7 +387,7 @@ class TestExecutor:
             })
             self._queue_console_cmd(run_id, f"echo [info] {line}")
 
-        # Fast path: an already-valid folder needs no work and no logging.
+        # A folder that is already valid needs no work and no logging.
         if sdk_source.is_sdk_root(raw):
             return raw
         root, error = sdk_source.resolve_sdk_root(raw, APP_DIR, log=note)
@@ -414,12 +414,12 @@ class TestExecutor:
                         window_only: bool = False) -> Optional[str]:
         """Capture a screenshot to out_path (PNG). Windows only.
 
-        The window's own pixels are read with PrintWindow + PW_RENDERFULLCONTENT,
+        The code reads the window's own pixels with PrintWindow + PW_RENDERFULLCONTENT,
         which reads from the window's DWM buffer. Because of this, an overlapping
         window (for example, this app's own live console) cannot appear in the
         shot. A CopyFromScreen of the window rectangle is only a fallback for
         when PrintWindow fails or returns an empty bitmap, because it captures
-        whatever is physically on screen.
+        whatever is on screen.
 
         When pid is given, capture that process's main window. When the pid's
         window handle can't be resolved (for example, Windows 11 Notepad launches
@@ -619,7 +619,7 @@ class TestExecutor:
         """Capture the WinForms/WPF window spawned by a `dotnet run` GUI step and
         log that it was displayed (issue #45). The window belongs to a descendant
         of the launched shell process, so the code finds it by walking the process
-        tree. Best-effort: emits a log line on success, a warning on failure."""
+        tree. Best-effort. Logs a line on success and a warning on failure."""
         # Use the project directory (for example, `w` or `mywpf`) so the WinForms and
         # WPF shots within one test get distinct names.
         label = step.get("label") or os.path.basename(os.path.normpath(ctx.cwd or ""))
@@ -656,11 +656,11 @@ class TestExecutor:
     def _build_screenshot_script(self, label: str, folder: str, folder_ps: str, delay: float, test_name: str = "",
                                  settings_uri: str = "", search: str = "") -> str:
         """Generate a PowerShell script that opens a window and saves a screenshot
-        of it into %SCREENSHOT_DIR%. Written to a .ps1 file (not inline) so quoting
-        is unaffected by the cmd console. The saved file is named after the test
-        (and label), for example `Workload-Scenario-1-installertype-<ts>.png`.
+        of it into %SCREENSHOT_DIR%. The code writes it to a .ps1 file, not inline,
+        so the cmd console does not change its quoting. The saved file has the
+        test name (and label), for example `Workload-Scenario-1-installertype-<ts>.png`.
 
-        Two targets are supported:
+        The script supports two targets:
           * a folder opened in File Explorer (`folder` / `folder_ps`), and
           * a Windows Settings page (`settings_uri`), optionally filtered by
             typing `search` into the page's search box."""
@@ -1084,7 +1084,7 @@ class TestExecutor:
             while True:
                 try:
                     event = queue.get(timeout=30)
-                    if event is None:  # Sentinel for end
+                    if event is None:  # None marks the end of the stream
                         break
                     yield event
                 except Empty:
@@ -1123,7 +1123,7 @@ class TestExecutor:
 
         # Validate a pinned SDK folder (for example, a zip-extracted install) or
         # extract a pinned .zip SDK. If it is unusable, fall back to the PATH
-        # default and show a clear warning. Otherwise a "zip install" test could
+        # default and log a warning. Otherwise a "zip install" test could
         # run against the wrong (exe-installed) SDK without any notice.
         raw_root = self._runs[run_id].get("sdk_path") or None
         root = self._resolve_pinned_root(run_id, raw_root, "SDK folder") if raw_root else None
@@ -1158,8 +1158,9 @@ class TestExecutor:
         )
         conn.commit()
 
-        # Record the SDK actually resolved by dotnet (a pinned version may be
-        # gone from the machine and silently roll forward). Log what really runs.
+        # Record the SDK that dotnet really resolves. A pinned version may be
+        # gone from the machine, and dotnet then rolls forward with no message.
+        # Log what really runs.
         run_pinned = self._runs.get(run_id, {}).get("sdk_version") or None
         actual = sdk_source.resolve_version(run_level_root, run_pinned)
         if actual:
@@ -1193,9 +1194,9 @@ class TestExecutor:
         # Continuous chains (issue #49). Tests marked `continuous` that run
         # back-to-back form one chain. They share a single working directory so
         # state carries over (for example, the global.json written by the pin
-        # test). If one test fails, the rest of the chain is skipped instead of
-        # run against a half-updated machine. Each test still starts at the chain
-        # root, so a `cd` inside one test never silently moves the next one.
+        # test). If one test fails, the run skips the rest of the chain instead
+        # of running it against a half-updated machine. Each test still starts at
+        # the chain root, so a `cd` inside one test never moves the next one.
         chain = None
 
         def close_chain():
@@ -1289,7 +1290,7 @@ class TestExecutor:
                     self._queue_console_cmd(run_id, f"echo [warn] test SDK folder invalid: {test_root}; using run default")
                 test_root = resolved
             if test_root and test_root != run_level.root:
-                # Resolve the version from this test's install for tfm + global.json.
+                # Resolve the version from this test's install, for {tfm} and global.json.
                 test_sdk = sdk_source.SdkContext(
                     test_root, sdk_source.resolve_version(test_root, run_pinned))
                 self._emit_event(run_id, {
@@ -1381,10 +1382,11 @@ class TestExecutor:
     ) -> tuple:
         """Run one test case in a temp working directory, then clean it up.
 
-        The directory is removed when the test passes. It is kept on purpose
-        when the test fails so the build output can be inspected, and the run
-        log shows the path. The startup sweep reclaims it later. A cancelled
-        test keeps nothing, because its directory is usually empty.
+        This method removes the directory when the test passes. When the test
+        fails, it keeps the directory on purpose so you can inspect the build
+        output, and the run log shows the path. The startup sweep reclaims it
+        later. A cancelled test keeps nothing, because its directory is usually
+        empty.
 
         shared_dir, when given, is a continuous chain's working directory. Every
         test in the chain reuses it and the caller owns it, so this test
@@ -1529,8 +1531,8 @@ class TestExecutor:
         except Exception as e:
             return f"{type(e).__name__}: {e}"
         finally:
-            # Close the Notepad window we opened with a force kill. The file is
-            # already saved, so there is nothing to prompt about.
+            # Close the Notepad window that this code opened. The file is
+            # already saved, so Notepad has nothing to ask about.
             try:
                 proc.terminate()
                 proc.wait(timeout=5)
@@ -1554,12 +1556,12 @@ class TestExecutor:
 
     def _run_long_running(self, run_id: str, cmd: str, step: dict, ctx: StepContext) -> tuple:
         """
-        Start a long-running server command, stream its output live to BOTH the app
+        Start a long-running server command, stream its output live to both the app
         panel and the popup console, wait for a readiness pattern, optionally
         HTTP-verify the hosted site, then terminate. Returns (stdout_text, exit_code).
 
-        Python owns the process, so it can kill it cleanly by PID. Each captured line
-        is written to a log file. The popup console tails that file live with a small
+        This code starts the process, so it can kill it by PID. It writes each
+        captured line to a log file. The popup console tails that file live with a small
         PowerShell script, so the console streams the same output as the panel in
         real time.
         """
@@ -1762,8 +1764,8 @@ class TestExecutor:
         return finish(exit_code)
 
     def _write_tail_script(self, console_dir: str) -> str:
-        """Write (idempotently) a PowerShell script that live-tails a growing log
-        file to the console and exits once a done-flag file appears."""
+        """Write a PowerShell script that live-tails a growing log file to the
+        console and exits once a done-flag file appears. Writing it again is safe."""
         path = os.path.join(console_dir, "tail.ps1")
         script = (
             'param([string]$Path, [string]$DoneFlag)\n'
@@ -1791,8 +1793,8 @@ class TestExecutor:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         last_err = ""
-        # Use a fixed 2 attempts with no backoff library. The server may need a
-        # short time after "Now listening on". Increase the range if that proves flaky.
+        # Try twice, 1 second apart. The server may need a short time after
+        # "Now listening on". If this check fails often, increase the range.
         for attempt in range(2):
             try:
                 with urllib.request.urlopen(url, timeout=10, context=ctx) as resp:

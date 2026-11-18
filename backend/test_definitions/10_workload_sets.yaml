@@ -1,8 +1,8 @@
 # Workload Sets (test plan: "Workload sets").
 #
-# These cases run as one continuous sequence (`continuous: true`): they share a
-# single working directory and, if one fails, the rest are skipped instead of
-# running against a half-updated machine.
+# These cases run as one continuous sequence (`continuous: true`). They share a
+# single working directory. If one fails, the app skips the rest instead of
+# running them against a half-updated machine.
 #
 # Four of them update or install a specific workload set version. That version
 # only exists on the workloads feed, so the app cannot derive it. Open the test

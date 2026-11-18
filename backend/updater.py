@@ -42,8 +42,8 @@ def _open(url, accept):
     req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "dotnet-test-runner"})
     token = (os.environ.get("GITHUB_TOKEN") or "").strip()
     if token:
-        # Unredirected header. The asset download redirects to storage that
-        # rejects a second auth.
+        # Use an unredirected header. The asset download redirects to storage
+        # that rejects a second auth.
         req.add_unredirected_header("Authorization", f"Bearer {token}")
     return urllib.request.urlopen(req, timeout=30)
 
@@ -93,7 +93,7 @@ def updater_script(app_dir, new_dir, pid):
         ":wait",
         # ping is used as the sleep, because `timeout` fails when there is no console input.
         f'tasklist /NH /FI "PID eq {pid}" | find " {pid} " >nul && (ping -n 2 127.0.0.1 >nul & goto wait)',
-        "ping -n 3 127.0.0.1 >nul",  # let antivirus/indexers drop their handles
+        "ping -n 3 127.0.0.1 >nul",  # wait so antivirus and indexers release their file handles
     ]
     items = sorted(os.listdir(new_dir))
     for name in items:
@@ -126,8 +126,8 @@ def updater_script(app_dir, new_dir, pid):
 def start(asset_url, app_dir, pid):
     """Stage the Release and launch the Updater. The caller must exit right after."""
     new_dir = stage(asset_url, app_dir)
-    # In %TEMP%, not _update: the script deletes _update and cmd re-reads the
-    # script file line by line.
+    # Put the script in %TEMP%, not _update. The script deletes _update, and cmd
+    # re-reads the script file line by line.
     fd, script = tempfile.mkstemp(prefix="dtr-update-", suffix=".cmd")
     # cmd reads batch files in the OEM code page.
     with os.fdopen(fd, "w", encoding="oem") as f:

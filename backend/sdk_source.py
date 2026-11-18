@@ -1,6 +1,6 @@
 """Discovery and resolution of .NET SDK installs (issue #74).
 
-Two jobs, both Windows-centric:
+This module does two jobs on Windows:
 
 * :func:`installed_sdk_labels` reads the Windows "Installed apps" registry. The
   SDK picker uses it to show SDKs the same way Settings > Apps > Installed apps
@@ -52,8 +52,9 @@ class SdkContext:
 
     @property
     def tfm(self):
-        """Target framework moniker for {tfm}, for example 11.0.100-preview.7 -> net11.0."""
-        # net10.0 when unpinned, not the machine default. Resolve it if that matters.
+        """Target framework moniker for {tfm}, for example 11.0.100-preview.7 gives net11.0."""
+        # With no pin this is net10.0, not the machine default. Use
+        # resolve_version first when the real version matters.
         return f"net{self.version.split('.')[0]}.0" if self.version else "net10.0"
 
     def dotnet_exe(self):
@@ -125,7 +126,7 @@ def _registry_sdk_displays():
 
 
 def installed_sdk_labels():
-    """Map SDK version -> list of Settings-style labels for that version.
+    """Map each SDK version to a list of Settings-style labels for that version.
 
     A version can appear twice (an x64 and an x86 install). The caller then
     uses the SDK's path to pick one. See :func:`label_for`.

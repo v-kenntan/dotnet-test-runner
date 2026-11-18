@@ -252,7 +252,7 @@ def add_feeds(feeds: list, backup: bool = True) -> dict:
 
     try:
         ET.indent(tree, space="  ")
-    except AttributeError:  # Python < 3.9
+    except AttributeError:  # ET.indent needs Python 3.9 or later
         pass
     try:
         tree.write(path, encoding="utf-8", xml_declaration=True)

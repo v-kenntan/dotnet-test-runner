@@ -204,13 +204,13 @@ def load_builtin_definitions():
             if test_id in existing:
                 # Already seeded. Refresh the yaml-owned fields so edits to
                 # built-in tests (renames, new steps, re-ordering) reach
-                # existing DBs too. Only built-ins are yaml-owned. User
-                # created tests (is_builtin = 0) are left untouched.
-                # workload_version is deliberately NOT refreshed. The tester
-                # types it in the editor before a run, so re-seeding it on every
-                # startup would wipe the version they just selected. sdk_path is
-                # excluded for the same reason. It is pinned per machine, not
-                # owned by the yaml.
+                # existing DBs too. Only built-ins are yaml-owned. This code
+                # does not change user-created tests (is_builtin = 0).
+                # It does not refresh workload_version. The tester types it
+                # in the editor before a run, so re-seeding it on every
+                # startup would wipe the version they just selected. It does
+                # not refresh sdk_path for the same reason. The tester pins
+                # sdk_path for each machine, and the yaml does not own it.
                 conn.execute(
                     """UPDATE test_cases
                           SET category = ?, title = ?, description = ?, steps = ?,
@@ -256,7 +256,7 @@ def load_builtin_definitions():
     # definition file takes effect on DBs that already seeded it.
     # The yaml_ids check (must be non-empty) means a missing or unreadable
     # definitions directory can never wipe every built-in test. Past run
-    # results are intentionally left alone to preserve history.
+    # results stay, to keep the history.
     stale = existing - yaml_ids
     if yaml_ids and stale:
         conn.executemany(
@@ -272,7 +272,7 @@ def load_builtin_definitions():
 executor = TestExecutor()
 
 
-# --- API Routes ---
+# --- API routes ---
 
 @app.route("/api/tests", methods=["GET"])
 def list_tests():
@@ -421,7 +421,7 @@ def delete_test(test_id):
 def list_runs():
     conn = get_db()
     # environment_info holds the full `dotnet --info` output (several KB per run)
-    # and the history list never renders it, so it is excluded here. That keeps
+    # and the history list never renders it, so this query leaves it out. That keeps
     # each row small enough for the client to hold every run and to page and
     # filter locally, instead of sending a request for each page.
     rows = conn.execute(
@@ -485,7 +485,7 @@ def list_screenshots(run_id):
 
 @app.route("/api/runs/<run_id>/screenshots/<path:filename>", methods=["GET"])
 def get_screenshot(run_id, filename):
-    """Serve a single screenshot PNG. Guarded against path traversal."""
+    """Serve a single screenshot PNG. Returns 404 for a path outside the run's folder."""
     run_dir = os.path.abspath(os.path.join(SCREENSHOTS_DIR, run_id))
     target = os.path.abspath(os.path.join(run_dir, filename))
     if not target.startswith(run_dir + os.sep) or not os.path.isfile(target):
@@ -529,8 +529,8 @@ def apply_update():
     """Download the latest Release, hand off to the Updater, and exit."""
     if executor.has_active_run():
         return jsonify({"error": "A test run is active. Wait for it to finish, then update."}), 409
-    # The release is checked again here and never taken from the request. Any
-    # local page can POST to this server, and the URL decides what gets run.
+    # This route checks the release again and never reads it from the request.
+    # Any local page can POST to this server, and the URL decides what runs.
     try:
         release = updater.check(APP_VERSION)
     except Exception:
@@ -930,7 +930,7 @@ def run_app_window():
             "--window-size=1280,800",
             "--no-first-run",
             "--no-default-browser-check",
-        ], cwd=tempfile.gettempdir())  # don't pin the app's folder open (see nuget_config)
+        ], cwd=tempfile.gettempdir())  # so the browser does not hold the app's folder open (see nuget_config)
     except OSError as e:
         print(f"App window unavailable ({e}); falling back to browser.")
         return False

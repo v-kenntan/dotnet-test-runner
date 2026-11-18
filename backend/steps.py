@@ -117,8 +117,9 @@ def _no_log(line: str, is_command: bool = False) -> None:
 
 @dataclass(frozen=True)
 class StepContext:
-    """Everything a Step needs from its Test case. Frozen: a cd Step returns
-    its new folder in the outcome, and the orchestrator makes the next context."""
+    """Everything a Step needs from its Test case. It is frozen, so a cd Step
+    returns its new folder in the outcome, and the orchestrator makes the next
+    context."""
     cwd: str
     sdk: sdk_source.SdkContext = field(default_factory=sdk_source.SdkContext)
     test_name: str = ""
@@ -267,7 +268,7 @@ def _command(command, step, ctx, shell, desktop) -> StepOutcome:
 
 def _long_running(command, step, ctx, desktop) -> StepOutcome:
     """A server (`dotnet run` with ready_pattern) or a GUI app (run_timeout).
-    The runner streams its own output, so only the rules are applied here."""
+    The runner streams its own output, so this function only applies the rules."""
     ctx.log(f"$ {command}", is_command=True)
     output, exit_code = desktop.run_long_running(command, step, ctx)
     if ctx.cancel.is_set():
@@ -449,7 +450,7 @@ class ConsoleShell:
                 wf.write(f"echo {cwd}^> {command}\n")
                 # Capture the real exit code. The previous
                 # `cmd && echo 0 || echo 1` form changed every failure to
-                # 1, so a step with expected_exit_code: 1 passed on *any*
+                # 1, so a step with expected_exit_code: 1 passed on any
                 # error (including 9009, command not found). %ERRORLEVEL% is
                 # expanded when this line is read, and each statement is on
                 # its own line rather than in a parenthesised block, so no
