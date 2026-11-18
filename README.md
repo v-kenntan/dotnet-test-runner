@@ -296,15 +296,17 @@ tests:
 
 | Type | Fields | Description |
 |------|--------|-------------|
-| `command` | command, timeout, expected_exit_code, assert_output_contains, assert_output_matches, continue_on_error, run_timeout, screenshot, label | Execute a CLI command |
-| `write_file` | path, content, screenshot, label | Write content to a file |
-| `screenshot` | label, delay, folder / folder_ps / settings_uri + search | Open a folder in Explorer or a Settings page and capture that window (see [Screenshots](#screenshots-evidence-capture)) |
+| `command` | command, timeout, expected_exit_code, assert_output_contains, assert_output_matches, continue_on_error, long_running, run_timeout, screenshot, label | Execute a CLI command |
+| `write_file` | path, content, continue_on_error, screenshot, label | Write content to a file |
+| `screenshot` | label, delay, folder / folder_ps / settings_uri + search, continue_on_error | Open a folder in Explorer or a Settings page and capture that window (see [Screenshots](#screenshots-evidence-capture)) |
+
+Every step gets one Step outcome: passed, warning or failed. A `command` step (including `long_running` and `run_timeout` ones) passes when its exit code matches `expected_exit_code` (default `0`) and all `assert_output_*` checks match. It is a warning when it passes but the output has an MSBuild/NuGet warning such as `warning NU1903:`. A failed step stops the test unless the step sets `continue_on_error: true`. A `command` of the form `cd <folder>` changes the working folder for the next steps, and fails when the folder does not exist. A `write_file` step fails when the file cannot be written. A step with an unknown `type` fails.
 
 Three flags capture evidence without a dedicated `screenshot` step:
 
 - `run_timeout: 10` on a `command` step runs a blocking GUI app (WinForms/WPF), leaves the window up for that many seconds, then closes it and passes. Adding `screenshot: true` captures the window before it closes.
 - `screenshot: true` on a plain `command` step captures the live console once the command finishes, so the command and its output are kept as a checkpoint. The **MAUI Workload** tests use it on `dotnet workload list` before install, after install, and after update (issue #77), and **Wasm-tools Workload (zip install)** before and after install (issue #78).
-- `screenshot: true` on a `write_file` step writes the file through Notepad and captures the Notepad window.
+- `screenshot: true` on a `write_file` step writes the file, opens it in Notepad and captures the Notepad window.
 
 All three are Windows-only and are used by the C# WinForms/WPF and xUnit/NUnit/MSTest tests, the VB equivalents, the **Non-native SDK** tests, and the MAUI and wasm-tools workload tests. An optional `label` names the resulting PNG; it defaults to the project folder (`run_timeout`), `console` (plain `command`), or the file name (`write_file`), so set it explicitly when one test captures two files with the same name.
 
@@ -339,7 +341,8 @@ Placeholders also expand inside `assert_output_contains` and `assert_output_matc
 dotnet-test-runner/
 ├── backend/
 │   ├── app.py              # Flask API server + static file serving
-│   ├── executor.py         # Test execution engine (Popen + SSE)
+│   ├── executor.py         # Run orchestration: console window, records each Step outcome, SSE
+│   ├── steps.py            # Runs one Step and judges its Step outcome (all Step rules)
 │   ├── results_export.py   # Persistent run export (OneDrive / UNC share)
 │   ├── db_store.py         # Where the live database and screenshots are kept
 │   ├── sdk_source.py       # Zip SDK extraction + install-root resolution

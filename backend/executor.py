@@ -14,13 +14,18 @@ import ctypes
 import platform
 import urllib.request
 import webbrowser
+from dataclasses import replace
 from datetime import datetime
 from queue import Queue, Empty
-from typing import Dict, List, Generator
+from typing import Dict, List, Generator, Optional
 
 import results_export
 import db_store
 import sdk_source
+from steps import (
+    CANCELLED, FAILED, WARNING, ConsoleShell, DirectShell, StepContext, StepOutcome,
+    render_terminal_output, run_step, screenshot_base,
+)
 
 # Read-only fixtures shipped with the app (for example, sample projects that tests
 # copy into their work dir). Resolves under PyInstaller's _MEIPASS when bundled.
@@ -52,70 +57,6 @@ def _stale_sources() -> list:
     now = _source_mtimes()
     return sorted(os.path.basename(p) for p, m in now.items()
                   if _LOADED_MTIMES.get(p) != m)
-
-
-_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
-
-
-def _render_terminal_output(text: str) -> str:
-    """Collapse a terminal-logger animation stream into the final rendered
-    screen a real console would show. SGR colors are kept.
-
-    The .NET SDK's modern terminal logger (forced on via MSBUILDTERMINALLOGGER)
-    emits cursor-movement escapes to animate progress in place. When the output
-    is captured to a file, those frames pile up. So we replay them through a VT
-    emulator and read back the final screen.
-
-    This only runs when cursor-control escapes are present (the
-    `\\x1b[?25` show/hide-cursor codes that the logger always emits). Plain
-    command output passes through unchanged. It is never reflowed or
-    truncated to the emulator width.
-    """
-    if "\x1b[?25" not in text:
-        return text
-    try:
-        import pyte
-    except ImportError:
-        return text
-
-    named = {"black": 0, "red": 1, "green": 2, "brown": 3,
-             "blue": 4, "magenta": 5, "cyan": 6, "white": 7}
-
-    def sgr(char) -> str:
-        parts = []
-        if char.bold:
-            parts.append("1")
-        if char.fg != "default":
-            parts.append(str(30 + named.get(char.fg, 9)))
-        if char.bg != "default":
-            parts.append(str(40 + named.get(char.bg, 9)))
-        return ";".join(parts)
-
-    def render_line(buf) -> str:
-        cols = (max(buf) + 1) if buf else 0
-        out, prev = "", ""
-        for col in range(cols):
-            char = buf[col]
-            code = sgr(char)
-            if code != prev:
-                out += "\x1b[0m" + (f"\x1b[{code}m" if code else "")
-                prev = code
-            out += char.data
-        if prev:
-            out += "\x1b[0m"
-        return out.rstrip()
-
-    screen = pyte.HistoryScreen(200, 50, history=5000)
-    # Windows consoles treat LF as CR+LF (move to column 0). pyte defaults
-    # to a Unix bare LF, which breaks output that moves the cursor. LNM mode
-    # makes pyte match the real console that the app imitates.
-    screen.set_mode(pyte.modes.LNM)
-    pyte.Stream(screen).feed(text)
-    rows = list(screen.history.top) + [screen.buffer[i] for i in range(screen.lines)]
-    lines = [render_line(buf) for buf in rows]
-    while lines and not lines[-1].strip():
-        lines.pop()
-    return "\n".join(lines)
 
 
 def _get_db_path():
@@ -345,20 +286,6 @@ def _parse_rid(dotnet_info: str) -> str:
     return match.group(1) if match else _host_rid()
 
 
-# Matches MSBuild/NuGet/Roslyn diagnostic warnings, for example "warning NU1903:",
-# "warning CS0168:", "warning MSB3277:", "warning NETSDK1138:". These mean that a
-# step succeeded but emitted a diagnostic worth showing (for example, a package with
-# a known vulnerability), so the test is reported as "passed with warnings".
-_WARNING_RE = re.compile(r"\bwarning\s+[A-Za-z]{2,}[0-9]+\s*:", re.IGNORECASE)
-
-
-def _detect_warnings(text: str) -> bool:
-    """Return True if the output contains an MSBuild/NuGet-style warning line."""
-    if not text:
-        return False
-    return bool(_WARNING_RE.search(text))
-
-
 # Title fragment common to this app's own windows: the Edge app window
 # (".NET SDK Test Runner") and the live console (".NET Test Runner - Run <id>").
 # Screenshot capture excludes them so a run never photographs the runner itself.
@@ -374,6 +301,33 @@ def get_db():
     # for a moment. Wait instead of failing the step write at once.
     conn.execute("PRAGMA busy_timeout=10000")
     return conn
+
+
+class _RunDesktop:
+    """The Desktop adapter for one run: TestExecutor's Windows helpers, bound
+    to the run's console window."""
+
+    def __init__(self, executor: "TestExecutor", run_id: str):
+        self._ex = executor
+        self._run_id = run_id
+
+    def show_in_notepad(self, path, screenshot_path):
+        return self._ex._show_in_notepad(path, screenshot_path)
+
+    def capture_console(self, screenshot_path):
+        """Capture the live console after a `screenshot: true` command step, so
+        the command and its output are kept as a checkpoint (issue #77). The
+        console is found by its `title ... - Run <run_id>`."""
+        if not self._ex._console_procs.get(self._run_id):
+            return "no console window"
+        return self._ex._capture_screen(
+            screenshot_path, title_hint=f"Run {self._run_id}", window_only=True)
+
+    def screenshot_command(self, step, ctx):
+        return self._ex._screenshot_command(self._run_id, step, ctx)
+
+    def run_long_running(self, command, step, ctx):
+        return self._ex._run_long_running(self._run_id, command, step, ctx)
 
 
 class TestExecutor:
@@ -415,10 +369,6 @@ class TestExecutor:
         )
         thread.start()
 
-    def _sdk(self, run_id: str) -> sdk_source.SdkContext:
-        """SDK context in effect right now: the current test's, else unpinned."""
-        return (self._runs.get(run_id) or {}).get("sdk") or sdk_source.SdkContext()
-
     def _resolve_pinned_root(self, run_id: str, raw: str, what: str):
         """Resolve a pinned SDK path to an install root, or None if unusable.
 
@@ -450,19 +400,6 @@ class TestExecutor:
             return None
         return root
 
-    def _sdk_env(self, run_id: str) -> dict:
-        """Environment for a direct dotnet call: the SDK context's, plus the
-        run's screenshot folder."""
-        env = self._sdk(run_id).env()
-        scr = self._screenshot_dir(run_id)
-        if scr:
-            env["SCREENSHOT_DIR"] = scr
-        return env
-
-    def _screenshot_dir(self, run_id: str):
-        """Per-run folder where screenshots for this run are saved, or None."""
-        return (self._runs.get(run_id, {}) or {}).get("_screenshot_dir") or None
-
     def _powershell_exe(self) -> str:
         """Full path to Windows PowerShell. The spawned console's PATH may lack
         System32, so a bare `powershell` name is not always found."""
@@ -474,7 +411,7 @@ class TestExecutor:
     def _capture_screen(self, out_path: str, pid: int = None, title_hint: str = None,
                         foreground_fallback: bool = False, exclude_title: str = None,
                         maximize: bool = False, descendant_of_pid: int = None,
-                        window_only: bool = False) -> bool:
+                        window_only: bool = False) -> Optional[str]:
         """Capture a screenshot to out_path (PNG). Windows only.
 
         The window's own pixels are read with PrintWindow + PW_RENDERFULLCONTENT,
@@ -492,12 +429,7 @@ class TestExecutor:
         neither pid nor title match (useful for browsers, which bring themselves
         to the front). Falls back to a full virtual-screen capture only if no
         window can be resolved and window_only is not set. Best-effort. Returns
-        True only if the PNG was written. The failure reason is stored in
-        self._last_capture_error for the caller to log."""
-        self._last_capture_error = None
-        if sys.platform != "win32":
-            self._last_capture_error = "not supported on non-Windows"
-            return False
+        None when the PNG was written, else the failure reason."""
         script_path = None
         try:
             os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -668,16 +600,14 @@ class TestExecutor:
                 stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            if os.path.isfile(out_path):
+                return None
             if r.returncode != 0:
                 err = (r.stderr or b"").decode("utf-8", "replace").strip()
-                self._last_capture_error = err[:500] or f"powershell exit code {r.returncode}"
-            ok = os.path.isfile(out_path)
-            if not ok and not self._last_capture_error:
-                self._last_capture_error = "screenshot file was not created"
-            return ok
+                return err[:500] or f"powershell exit code {r.returncode}"
+            return "screenshot file was not created"
         except Exception as e:
-            self._last_capture_error = f"{type(e).__name__}: {e}"
-            return False
+            return f"{type(e).__name__}: {e}"
         finally:
             if script_path:
                 try:
@@ -685,59 +615,43 @@ class TestExecutor:
                 except OSError:
                     pass
 
-    def _capture_gui_window(self, run_id, result_id, idx, root_pid, test_name, cwd,
-                            write_log, lines, step) -> None:
+    def _capture_gui_window(self, ctx: StepContext, root_pid: int, write_log, lines, step) -> None:
         """Capture the WinForms/WPF window spawned by a `dotnet run` GUI step and
         log that it was displayed (issue #45). The window belongs to a descendant
         of the launched shell process, so the code finds it by walking the process
         tree. Best-effort: emits a log line on success, a warning on failure."""
-        def _slug(s):
-            return re.sub(r"[^A-Za-z0-9_-]+", "-", (s or "")).strip("-")
-        scr = self._screenshot_dir(run_id)
-        shot_path = None
-        if scr:
-            # Use the project directory (for example, `w` or `mywpf`) so the WinForms and
-            # WPF shots within one test get distinct names.
-            label = step.get("label") or os.path.basename(os.path.normpath(cwd or "")) or "gui-window"
-            base = "-".join(p for p in (_slug(test_name), _slug(label)) if p) or "gui-window"
-            shot_path = os.path.join(scr, f"{base}-{time.strftime('%Y%m%d-%H%M%S')}.png")
-        target = shot_path or os.path.join(tempfile.gettempdir(), f"gui_shot_{idx}.png")
-        saved = self._capture_screen(
+        # Use the project directory (for example, `w` or `mywpf`) so the WinForms and
+        # WPF shots within one test get distinct names.
+        label = step.get("label") or os.path.basename(os.path.normpath(ctx.cwd or ""))
+        shot_path = ctx.screenshot_path(label, "gui-window")
+        target = shot_path or os.path.join(tempfile.gettempdir(), f"gui_shot_{uuid.uuid4().hex[:8]}.png")
+        err = self._capture_screen(
             target, descendant_of_pid=root_pid, exclude_title=OWN_WINDOW_TITLE,
             window_only=True,
         )
-        if saved and shot_path and os.path.isfile(shot_path):
+        if not err and shot_path:
             msg = f"🖼️ GUI window displayed; screenshot: {os.path.basename(shot_path)}"
-        elif saved:
+        elif not err:
             msg = "🖼️ GUI window displayed"
         else:
-            reason = getattr(self, "_last_capture_error", None) or "window not detected"
-            msg = f"[warn] GUI window screenshot failed: {reason}"
-        self._emit_event(run_id, {
-            "type": "step_output", "result_id": result_id, "step_index": idx, "line": msg,
-        })
+            msg = f"[warn] GUI window screenshot failed: {err}"
+        ctx.log(msg)
         write_log("\n" + msg + "\n")
         lines.append("\n" + msg + "\n")
 
-    def _capture_console(self, run_id, result_id, idx, test_name, step) -> None:
-        """Capture the live console after a `screenshot: true` command step, so the
-        command and its output are kept as a checkpoint (issue #77). The console
-        is found by its `title ... - Run <run_id>`. Best-effort, like the other
-        captures: a failure is logged as a warning and never fails the step."""
-        scr = self._screenshot_dir(run_id)
-        if not scr:
-            return
-        slug = lambda s: re.sub(r"[^A-Za-z0-9_-]+", "-", (s or "")).strip("-")
-        label = step.get("label") or "console"
-        base = "-".join(p for p in (slug(test_name), slug(label)) if p) or "console"
-        shot_path = os.path.join(scr, f"{base}-{time.strftime('%Y%m%d-%H%M%S')}.png")
-        if self._capture_screen(shot_path, title_hint=f"Run {run_id}", window_only=True):
-            msg = f"🖼️ Console screenshot: {os.path.basename(shot_path)}"
-        else:
-            msg = f"[warn] Console screenshot failed: {self._last_capture_error or 'window not found'}"
-        self._emit_event(run_id, {
-            "type": "step_output", "result_id": result_id, "step_index": idx, "line": msg,
-        })
+    def _screenshot_command(self, run_id: str, step: dict, ctx: StepContext) -> str:
+        """Write the screenshot script for a `screenshot` step and return the
+        command that runs it. Raises OSError when the script cannot be written."""
+        console_dir = self._console_procs.get(run_id)
+        script_path = os.path.join(console_dir or tempfile.gettempdir(),
+                                   f"screenshot_{uuid.uuid4().hex[:8]}.ps1")
+        with open(script_path, "w", encoding="utf-8") as sf:
+            sf.write(self._build_screenshot_script(
+                step.get("label", "screenshot"), step.get("folder", ""),
+                step.get("folder_ps", ""), step.get("delay", 4), ctx.test_name,
+                step.get("settings_uri", ""), step.get("search", ""),
+            ))
+        return f'"{self._powershell_exe()}" -NoProfile -ExecutionPolicy Bypass -File "{script_path}"'
 
     def _build_screenshot_script(self, label: str, folder: str, folder_ps: str, delay: float, test_name: str = "",
                                  settings_uri: str = "", search: str = "") -> str:
@@ -750,10 +664,7 @@ class TestExecutor:
           * a folder opened in File Explorer (`folder` / `folder_ps`), and
           * a Windows Settings page (`settings_uri`), optionally filtered by
             typing `search` into the page's search box."""
-        def _slug(s):
-            return re.sub(r"[^A-Za-z0-9_-]+", "-", (s or "")).strip("-")
-        parts = [p for p in (_slug(test_name), _slug(label)) if p]
-        base = "-".join(parts) or "screenshot"
+        base = screenshot_base(test_name, label, "screenshot")
         if folder_ps:
             resolve = "$folder = (& { " + folder_ps.strip() + " } | Select-Object -Last 1)"
         else:
@@ -996,97 +907,45 @@ class TestExecutor:
             with open(cmd_file, "w", encoding="utf-8") as f:
                 f.write("")
 
-            if sys.platform == "win32":
-                # Create a batch script that polls for commands
-                script_path = os.path.join(console_dir, "runner.bat")
-                exec_file = os.path.join(console_dir, "exec.bat")
-                with open(script_path, "w", encoding="utf-8") as f:
-                    f.write("@echo off\n")
-                    f.write("%SystemRoot%\\System32\\chcp.com 65001 >nul\n")  # full path, because PATH may lack System32 in the spawned console
-                    # Snapshot the pristine PATH once. Each command wrapper rebuilds
-                    # PATH from this baseline so a per-test SDK folder pinned in one
-                    # test never leaks into a later test that uses the default SDK.
-                    f.write('set "TESTRUNNER_BASE_PATH=%PATH%"\n')
-                    f.write(f"title .NET Test Runner - Run {run_id}\n")
-                    f.write("echo ========================================\n")
-                    f.write("echo   .NET SDK Test Runner - Live Console\n")
-                    f.write("echo ========================================\n")
-                    f.write("echo.\n")
-                    f.write(":loop\n")
-                    f.write(f'if exist "{done_file}" goto end\n')
-                    # Check if commands file has content (size > 0)
-                    f.write(f'for %%A in ("{cmd_file}") do if %%~zA==0 goto wait\n')
-                    # Copy commands to exec file and clear the queue
-                    f.write(f'copy /y "{cmd_file}" "{exec_file}" >nul 2>&1\n')
-                    f.write(f'type nul > "{cmd_file}"\n')
-                    # Execute the commands
-                    f.write(f'call "{exec_file}"\n')
-                    f.write(":wait\n")
-                    f.write("timeout /t 1 /nobreak >nul 2>&1\n")
-                    f.write("goto loop\n")
-                    f.write(":end\n")
-                    f.write("echo.\n")
-                    f.write("echo ========================================\n")
-                    f.write("echo   Run complete. You may close this window.\n")
-                    f.write("echo ========================================\n")
-                    f.write("pause\n")
+            # Create a batch script that polls for commands
+            script_path = os.path.join(console_dir, "runner.bat")
+            exec_file = os.path.join(console_dir, "exec.bat")
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write("@echo off\n")
+                f.write("%SystemRoot%\\System32\\chcp.com 65001 >nul\n")  # full path, because PATH may lack System32 in the spawned console
+                # Snapshot the pristine PATH once. Each command wrapper rebuilds
+                # PATH from this baseline so a per-test SDK folder pinned in one
+                # test never leaks into a later test that uses the default SDK.
+                f.write('set "TESTRUNNER_BASE_PATH=%PATH%"\n')
+                f.write(f"title .NET Test Runner - Run {run_id}\n")
+                f.write("echo ========================================\n")
+                f.write("echo   .NET SDK Test Runner - Live Console\n")
+                f.write("echo ========================================\n")
+                f.write("echo.\n")
+                f.write(":loop\n")
+                f.write(f'if exist "{done_file}" goto end\n')
+                # Check if commands file has content (size > 0)
+                f.write(f'for %%A in ("{cmd_file}") do if %%~zA==0 goto wait\n')
+                # Copy commands to exec file and clear the queue
+                f.write(f'copy /y "{cmd_file}" "{exec_file}" >nul 2>&1\n')
+                f.write(f'type nul > "{cmd_file}"\n')
+                # Execute the commands
+                f.write(f'call "{exec_file}"\n')
+                f.write(":wait\n")
+                f.write("timeout /t 1 /nobreak >nul 2>&1\n")
+                f.write("goto loop\n")
+                f.write(":end\n")
+                f.write("echo.\n")
+                f.write("echo ========================================\n")
+                f.write("echo   Run complete. You may close this window.\n")
+                f.write("echo ========================================\n")
+                f.write("pause\n")
 
-                # Launch the batch script in a new console window
-                subprocess.Popen(
-                    ["cmd.exe", "/c", script_path],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
-            else:
-                import shutil
-                # Create a bash script that polls for commands
-                script_path = os.path.join(console_dir, "runner.sh")
-                with open(script_path, "w", encoding="utf-8") as f:
-                    f.write("#!/bin/bash\n")
-                    # Snapshot the pristine PATH once. Each command rebuilds PATH
-                    # from this baseline so a per-test SDK folder never leaks into a
-                    # later test that uses the default SDK.
-                    f.write('export TESTRUNNER_BASE_PATH="$PATH"\n')
-                    f.write("echo '========================================'\n")
-                    f.write("echo '  .NET SDK Test Runner - Live Console'\n")
-                    f.write("echo '========================================'\n")
-                    f.write("echo\n")
-                    f.write(f'CMD_FILE="{cmd_file}"\n')
-                    f.write(f'DONE_FILE="{done_file}"\n')
-                    f.write("while true; do\n")
-                    f.write('  if [ -s "$CMD_FILE" ]; then\n')
-                    f.write('    while IFS= read -r line; do\n')
-                    f.write('      echo\n')
-                    f.write('      eval "$line"\n')
-                    f.write('    done < "$CMD_FILE"\n')
-                    f.write('    > "$CMD_FILE"\n')
-                    f.write("  fi\n")
-                    f.write('  if [ -f "$DONE_FILE" ]; then break; fi\n')
-                    f.write("  sleep 0.5\n")
-                    f.write("done\n")
-                    f.write("echo\n")
-                    f.write("echo '========================================'\n")
-                    f.write("echo '  Run complete. Press Enter to close.'\n")
-                    f.write("echo '========================================'\n")
-                    f.write("read\n")
-                os.chmod(script_path, 0o755)
-
-                terminals = [
-                    ["gnome-terminal", "--title", f"Test Runner - {run_id}", "--"],
-                    ["xfce4-terminal", "--title", f"Test Runner - {run_id}", "-e"],
-                    ["konsole", "--title", f"Test Runner - {run_id}", "-e"],
-                    ["xterm", "-title", f"Test Runner - {run_id}", "-e"],
-                ]
-                for term in terminals:
-                    if shutil.which(term[0]):
-                        try:
-                            subprocess.Popen(
-                                term + [script_path],
-                                start_new_session=True,
-                            )
-                        except Exception:
-                            continue
-                        break
-
+            # Launch the batch script in a new console window
+            subprocess.Popen(
+                ["cmd.exe", "/c", script_path],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
 
             # Store the console directory path for communication
             self._console_procs[run_id] = console_dir
@@ -1254,10 +1113,11 @@ class TestExecutor:
 
         # Per-run folder for screenshots captured by `screenshot` steps, kept
         # next to the DB so results persist and can be browsed per run.
+        screenshot_dir = None
         try:
             run_scr = os.path.join(SCREENSHOTS_DIR, run_id)
             os.makedirs(run_scr, exist_ok=True)
-            self._runs[run_id]["_screenshot_dir"] = run_scr
+            screenshot_dir = run_scr
         except OSError:
             pass
 
@@ -1287,12 +1147,11 @@ class TestExecutor:
         # Run-level SDK install. Each test defaults to it, but a test may pin its
         # own install folder (test["sdk_path"]) to override it for that test only.
         run_level_root = self._runs[run_id].get("sdk_path") or None
-        self._runs[run_id]["sdk"] = sdk_source.SdkContext(run_level_root)
 
         # Capture environment info
-        env_info = self._capture_environment(run_id)
+        env_info = self._capture_environment(sdk_source.SdkContext(run_level_root))
         # RID reported by this run's SDK, used by `{rid}` in publish steps.
-        self._runs[run_id]["_rid"] = _parse_rid(env_info)
+        rid = _parse_rid(env_info) or _host_rid()
         conn.execute(
             "UPDATE test_runs SET environment_info=? WHERE id=?",
             (env_info, run_id),
@@ -1431,7 +1290,7 @@ class TestExecutor:
                 test_root = resolved
             if test_root and test_root != run_level.root:
                 # Resolve the version from this test's install for tfm + global.json.
-                self._runs[run_id]["sdk"] = sdk_source.SdkContext(
+                test_sdk = sdk_source.SdkContext(
                     test_root, sdk_source.resolve_version(test_root, run_pinned))
                 self._emit_event(run_id, {
                     "type": "step_output", "result_id": result_id, "step_index": -1,
@@ -1439,13 +1298,18 @@ class TestExecutor:
                 })
                 self._queue_console_cmd(run_id, f"echo [info] test pinned to SDK install: {test_root}")
             else:
-                self._runs[run_id]["sdk"] = run_level
+                test_sdk = run_level
 
-            # The workload set version this test pins via {workload_version}.
-            self._runs[run_id]["_workload_version"] = test.get("workload_version") or ""
-
+            ctx = StepContext(
+                cwd="", sdk=test_sdk, test_name=test.get("title") or test_case_id, rid=rid,
+                # The workload set version that the tester picked for this test in the
+                # editor (issue #49). The versions exist only on the workloads feed, so
+                # the code cannot derive the value.
+                workload_version=(test.get("workload_version") or "").strip(),
+                assets_dir=ASSETS_DIR, screenshot_dir=screenshot_dir, cancel=cancel_flag,
+            )
             test_passed, test_warned = self._execute_test(
-                run_id, result_id, steps, cancel_flag, conn, test.get("title") or test_case_id,
+                run_id, result_id, steps, ctx, conn,
                 shared_dir=chain["dir"] if chain else None,
             )
 
@@ -1512,9 +1376,8 @@ class TestExecutor:
         )
 
     def _execute_test(
-        self, run_id: str, result_id: str, steps: List[dict],
-        cancel_flag: threading.Event, conn: sqlite3.Connection, test_name: str = "",
-        shared_dir: str = None
+        self, run_id: str, result_id: str, steps: List[dict], ctx: StepContext,
+        conn: sqlite3.Connection, shared_dir: str = None
     ) -> tuple:
         """Run one test case in a temp working directory, then clean it up.
 
@@ -1530,7 +1393,7 @@ class TestExecutor:
         work_dir = shared_dir or tempfile.mkdtemp(prefix="dotnet_test_")
         try:
             all_passed, had_warnings = self._execute_test_steps(
-                run_id, result_id, steps, cancel_flag, conn, test_name, work_dir
+                run_id, result_id, steps, replace(ctx, cwd=work_dir), conn
             )
         except BaseException:
             if not shared_dir:
@@ -1540,7 +1403,7 @@ class TestExecutor:
         if shared_dir:
             return (all_passed, had_warnings)
 
-        if all_passed or cancel_flag.is_set():
+        if all_passed or ctx.cancel.is_set():
             _rmtree(work_dir)
         else:
             self._emit_event(run_id, {
@@ -1552,431 +1415,93 @@ class TestExecutor:
         return (all_passed, had_warnings)
 
     def _execute_test_steps(
-        self, run_id: str, result_id: str, steps: List[dict],
-        cancel_flag: threading.Event, conn: sqlite3.Connection, test_name: str,
-        work_dir: str,
+        self, run_id: str, result_id: str, steps: List[dict], ctx: StepContext,
+        conn: sqlite3.Connection,
     ) -> tuple:
-        """Execute all steps for a single test case.
+        """Run the Steps of one Test case and record each Step outcome once.
 
-        Returns (all_passed, had_warnings). all_passed is True if every step
-        passed. had_warnings is True if any passing step emitted an
-        MSBuild/NuGet-style warning (for example, the NU1903 vulnerability warning).
+        ctx.cwd is the Test case's working folder. A cd Step moves it for the
+        Steps after it. Returns (all_passed, had_warnings). had_warnings is True
+        if any Step passed with an MSBuild/NuGet-style warning (for example,
+        the NU1903 vulnerability warning).
         """
-        current_dir = work_dir
-        all_passed = True
-        had_warnings = False
-
-        # Pin the SDK via global.json, using this test's SDK context (a per-test
-        # folder override, or the run-level default).
-        run = self._runs.get(run_id, {})
-        sdk = self._sdk(run_id)
-        # {tfm} in step commands/content tracks the selected SDK's target framework
-        # moniker. net48 and other literals are untouched.
-        tfm = sdk.tfm
-        # {rid} tracks the machine/SDK architecture (win-x64, win-arm64, ...).
-        rid = run.get("_rid") or _host_rid()
-        # {workload_version} is the workload set version the tester picked for this
-        # test in the editor (issue #49). The available versions only exist on the
-        # workloads feed, so the code cannot derive the value. The tester must supply it.
-        workload_version = (run.get("_workload_version") or "").strip()
-
-        def expand(text: str) -> str:
-            return (text.replace("{tfm}", tfm).replace("{rid}", rid)
-                        .replace("{assets}", ASSETS_DIR)
-                        .replace("{workload_version}", workload_version))
+        def record(idx: int, outcome: StepOutcome):
+            conn.execute(
+                """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, stderr, status, duration_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (str(uuid.uuid4())[:12], result_id, idx, outcome.step_type, outcome.label,
+                 outcome.exit_code, outcome.stdout[:10000], outcome.stderr[:5000],
+                 outcome.status, outcome.duration_ms),
+            )
+            conn.commit()
+            self._emit_event(run_id, {
+                "type": "step_end", "result_id": result_id, "step_index": idx,
+                "status": outcome.status, "exit_code": outcome.exit_code,
+                "duration_ms": outcome.duration_ms,
+            })
 
         # Fail fast when a step needs a workload set version that was never set.
         # An empty string would run, for example, `dotnet workload update
         # --version ` and fail with an unrelated CLI parse error.
-        if not workload_version and any(
+        if not ctx.workload_version and any(
             "{workload_version}" in json.dumps(step) for step in steps
         ):
             msg = ("[error] This test needs a workload set version. Open it in the "
                    "editor, set \"Workload set version\" (e.g. from `dotnet workload "
                    "search version`), then run it again.")
-            self._emit_event(run_id, {
-                "type": "step_output", "result_id": result_id, "step_index": -1,
-                "line": msg,
-            })
-            conn.execute(
-                """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, status, duration_ms)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (str(uuid.uuid4())[:12], result_id, 0, "command",
-                 "workload set version required", -1, msg, "failed", 0),
-            )
-            conn.commit()
-            return (False, had_warnings)
+            self._step_log(run_id, result_id, -1)(msg)
+            record(0, StepOutcome(FAILED, "command", "workload set version required",
+                                  exit_code=-1, stdout=msg))
+            return (False, False)
 
-        sdk.write_global_json(work_dir)
+        ctx.sdk.write_global_json(ctx.cwd)
 
+        direct = DirectShell(ctx)
+        console_dir = self._console_procs.get(run_id)
+        shell = ConsoleShell(console_dir, ctx, fallback=direct) if console_dir else direct
+        desktop = _RunDesktop(self, run_id)
+
+        all_passed = True
+        had_warnings = False
         for idx, step in enumerate(steps):
-            if cancel_flag.is_set():
+            if ctx.cancel.is_set():
                 return (False, had_warnings)
-
-            step_id = str(uuid.uuid4())[:12]
-            step_type = step.get("type", "command")
-            timeout = step.get("timeout", 120)
-            expected_exit = step.get("expected_exit_code", 0)
-
-            if step_type == "command":
-                cmd = expand(step["command"])
-                # Handle cd commands by updating current_dir
-                if cmd.strip().startswith("cd "):
-                    prev_dir = current_dir
-                    target = cmd.strip()[3:].strip()
-                    if os.path.isabs(target):
-                        current_dir = target
-                    else:
-                        current_dir = os.path.normpath(os.path.join(current_dir, target))
-                    # Write global.json to the new directory too, if it is not there
-                    if (os.path.isdir(current_dir)
-                            and not os.path.exists(os.path.join(current_dir, "global.json"))):
-                        sdk.write_global_json(current_dir)
-                    conn.execute(
-                        """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, status, duration_ms)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (step_id, result_id, idx, "cd", cmd, 0, f"Changed to: {current_dir}", "passed", 0),
-                    )
-                    conn.commit()
-                    self._emit_event(run_id, {
-                        "type": "step_output",
-                        "result_id": result_id,
-                        "step_index": idx,
-                        "line": f"$ {cmd}\n  → {current_dir}",
-                    })
-                    # Send cd to the console. Echo the prompt at the dir BEFORE cd,
-                    # so it matches a manual run.
-                    self._queue_console_cmd(run_id, f"echo {prev_dir}^> {cmd}")
-                    self._queue_console_cmd(run_id, f"cd /d {current_dir}")
-                    continue
-
-                # Long-running server step (for example, `dotnet run`). Stream output, wait
-                # for readiness, optionally verify the hosted site, then terminate.
-                # `run_timeout` reuses the same path for blocking GUI apps (WinForms/
-                # WPF). It runs for N seconds so the window shows, then auto-closes it.
-                if step.get("long_running") or step.get("run_timeout"):
-                    start_time = time.time()
-                    self._emit_event(run_id, {
-                        "type": "step_output",
-                        "result_id": result_id,
-                        "step_index": idx,
-                        "line": f"$ {cmd}",
-                        "is_command": True,
-                    })
-                    stdout_text, exit_code = self._run_long_running(
-                        run_id, result_id, idx, cmd, current_dir, step, cancel_flag, timeout,
-                        test_name,
-                    )
-                    if cancel_flag.is_set():
-                        return (False, had_warnings)
-                    duration_ms = int((time.time() - start_time) * 1000)
-                    step_passed = (exit_code == 0)
-                    step_warned = step_passed and _detect_warnings(stdout_text)
-                    if step_warned:
-                        had_warnings = True
-                    status = "warning" if step_warned else ("passed" if step_passed else "failed")
-                    if not step_passed:
-                        all_passed = False
-                    conn.execute(
-                        """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, stderr, status, duration_ms)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (step_id, result_id, idx, "command", cmd, exit_code,
-                         stdout_text[:10000], "", status, duration_ms),
-                    )
-                    conn.commit()
-                    self._emit_event(run_id, {
-                        "type": "step_end",
-                        "result_id": result_id,
-                        "step_index": idx,
-                        "status": status,
-                        "exit_code": exit_code,
-                        "duration_ms": duration_ms,
-                    })
-                    if not step_passed and not step.get("continue_on_error", False):
-                        break
-                    continue
-
-                # Execute the command
-                start_time = time.time()
-
-                # Emit the command being run to the app
-                self._emit_event(run_id, {
-                    "type": "step_output",
-                    "result_id": result_id,
-                    "step_index": idx,
-                    "line": f"$ {cmd}",
-                    "is_command": True,
-                })
-
-                # Run command in the console window and capture output
-                stdout_text, stderr_text, exit_code = self._run_in_console(
-                    run_id, cmd, current_dir, timeout, cancel_flag
-                )
-
-                if cancel_flag.is_set():
-                    return (False, had_warnings)
-
-                if (step.get("screenshot") and sys.platform == "win32"
-                        and self._console_procs.get(run_id)):
-                    self._capture_console(run_id, result_id, idx, test_name, step)
-
-                # Emit captured output to the in-app runner
-                if stdout_text:
-                    for line in stdout_text.splitlines():
-                        self._emit_event(run_id, {
-                            "type": "step_output",
-                            "result_id": result_id,
-                            "step_index": idx,
-                            "line": line,
-                        })
-                if stderr_text:
-                    for line in stderr_text.splitlines():
-                        self._emit_event(run_id, {
-                            "type": "step_output",
-                            "result_id": result_id,
-                            "step_index": idx,
-                            "line": f"[STDERR] {line}",
-                        })
-
-                duration_ms = int((time.time() - start_time) * 1000)
-
-                # Determine pass/fail
-                if isinstance(expected_exit, list):
-                    step_passed = exit_code in expected_exit
-                else:
-                    step_passed = exit_code == expected_exit
-
-                # Check output assertions if any (placeholders expand here too, so
-                # a step can assert on the version it was told to install)
-                if step_passed and "assert_output_contains" in step:
-                    for pattern in step["assert_output_contains"]:
-                        if expand(pattern) not in stdout_text:
-                            step_passed = False
-                            break
-
-                # Regex assertions run on colour-stripped output, because SGR codes
-                # can appear in the middle of a phrase (for example, "\x1b[31;1mfailed: 1\x1b[m").
-                if step_passed and "assert_output_matches" in step:
-                    plain = _ANSI_RE.sub("", stdout_text or "")
-                    for pattern in step["assert_output_matches"]:
-                        if not re.search(expand(pattern), plain):
-                            step_passed = False
-                            note = f"Assertion failed: output did not match /{expand(pattern)}/"
-                            stdout_text = f"{stdout_text}\n{note}"
-                            self._emit_event(run_id, {
-                                "type": "step_output",
-                                "result_id": result_id,
-                                "step_index": idx,
-                                "line": note,
-                            })
-                            break
-
-                step_warned = step_passed and _detect_warnings(stdout_text)
-                if step_warned:
-                    had_warnings = True
-                status = "warning" if step_warned else ("passed" if step_passed else "failed")
-                if not step_passed:
-                    all_passed = False
-
-                conn.execute(
-                    """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, stderr, status, duration_ms)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (step_id, result_id, idx, "command", cmd, exit_code,
-                     stdout_text[:10000], stderr_text[:5000],
-                     status, duration_ms),
-                )
-                conn.commit()
-
-                self._emit_event(run_id, {
-                    "type": "step_end",
-                    "result_id": result_id,
-                    "step_index": idx,
-                    "status": status,
-                    "exit_code": exit_code,
-                    "duration_ms": duration_ms,
-                })
-
-                # Stop test on first failure unless continue_on_error
-                if not step_passed and not step.get("continue_on_error", False):
-                    break
-
-            elif step_type == "screenshot":
-                # Open a folder in Explorer and capture a screenshot of the
-                # primary screen into the run's screenshot folder. Windows only.
-                start_time = time.time()
-                label = step.get("label", "screenshot")
-                delay = step.get("delay", 4)
-                timeout = step.get("timeout", 60)
-
-                if sys.platform != "win32":
-                    self._emit_event(run_id, {
-                        "type": "step_output", "result_id": result_id, "step_index": idx,
-                        "line": "[skip] screenshot step is only supported on Windows",
-                    })
-                    conn.execute(
-                        """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, status, duration_ms)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (step_id, result_id, idx, "screenshot", f"screenshot: {label}", 0,
-                         "skipped (non-Windows)", "passed", 0),
-                    )
-                    conn.commit()
-                    continue
-
-                console_dir = self._console_procs.get(run_id)
-                script_dir = console_dir if isinstance(console_dir, str) else tempfile.gettempdir()
-                script_path = os.path.join(script_dir, f"screenshot_{idx}.ps1")
-                try:
-                    with open(script_path, "w", encoding="utf-8") as sf:
-                        sf.write(self._build_screenshot_script(
-                            label, step.get("folder", ""), step.get("folder_ps", ""), delay,
-                            test_name, step.get("settings_uri", ""), step.get("search", ""),
-                        ))
-                except OSError as e:
-                    self._emit_event(run_id, {
-                        "type": "step_output", "result_id": result_id, "step_index": idx,
-                        "line": f"[error] could not write screenshot script: {e}",
-                    })
-                    all_passed = False
-                    break
-
-                cmd = f'"{self._powershell_exe()}" -NoProfile -ExecutionPolicy Bypass -File "{script_path}"'
-                self._emit_event(run_id, {
-                    "type": "step_output", "result_id": result_id, "step_index": idx,
-                    "line": f"📸 Capture screenshot ({label})", "is_command": True,
-                })
-
-                stdout_text, stderr_text, exit_code = self._run_in_console(
-                    run_id, cmd, current_dir, timeout, cancel_flag
-                )
-                if cancel_flag.is_set():
-                    return (False, had_warnings)
-
-                for line in (stdout_text or "").splitlines():
-                    self._emit_event(run_id, {
-                        "type": "step_output", "result_id": result_id, "step_index": idx, "line": line,
-                    })
-                for line in (stderr_text or "").splitlines():
-                    self._emit_event(run_id, {
-                        "type": "step_output", "result_id": result_id, "step_index": idx,
-                        "line": f"[STDERR] {line}",
-                    })
-
-                duration_ms = int((time.time() - start_time) * 1000)
-                step_passed = (exit_code == 0) and ("Screenshot saved:" in (stdout_text or ""))
-                status = "passed" if step_passed else "failed"
-                if not step_passed:
-                    all_passed = False
-
-                conn.execute(
-                    """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, stderr, status, duration_ms)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (step_id, result_id, idx, "screenshot", f"screenshot: {label}", exit_code,
-                     (stdout_text or "")[:10000], (stderr_text or "")[:5000], status, duration_ms),
-                )
-                conn.commit()
-
-                self._emit_event(run_id, {
-                    "type": "step_end", "result_id": result_id, "step_index": idx,
-                    "status": status, "exit_code": exit_code, "duration_ms": duration_ms,
-                })
-
-                if not step_passed and not step.get("continue_on_error", False):
-                    break
-
-            elif step_type == "write_file":
-                filepath = os.path.join(current_dir, step["path"])
-                os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                content = expand(step["content"])
-
-                start_time = time.time()
-
-                # Optionally capture a checkpoint screenshot of the Notepad window
-                # (Windows only) into the run's screenshot folder so it appears in
-                # the Screenshots tab.
-                shot_path = None
-                if step.get("screenshot") and sys.platform == "win32":
-                    scr = self._screenshot_dir(run_id)
-                    if scr:
-                        def _slug(s):
-                            return re.sub(r"[^A-Za-z0-9_-]+", "-", (s or "")).strip("-")
-                        label = step.get("label") or os.path.basename(step["path"])
-                        base = "-".join(p for p in (_slug(test_name), _slug(label)) if p) or "notepad"
-                        shot_path = os.path.join(
-                            scr, f"{base}-{time.strftime('%Y%m%d-%H%M%S')}.png"
-                        )
-
-                wrote_via_notepad = False
-                try:
-                    wrote_via_notepad = self._write_file_via_notepad(filepath, content, shot_path)
-                except Exception:
-                    wrote_via_notepad = False
-
-                if not wrote_via_notepad:
-                    # Fallback to direct write
-                    with open(filepath, "w", encoding="utf-8") as f:
-                        f.write(content)
-
-                duration_ms = int((time.time() - start_time) * 1000)
-                method_label = "via Notepad" if wrote_via_notepad else "direct"
-                shot_saved = bool(shot_path and os.path.isfile(shot_path))
-
-                stdout_msg = f"Wrote {len(content)} bytes ({method_label})"
-                if shot_saved:
-                    stdout_msg += f"; screenshot: {os.path.basename(shot_path)}"
-
-                conn.execute(
-                    """INSERT INTO step_results (id, test_result_id, step_index, step_type, command, exit_code, stdout, status, duration_ms)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (step_id, result_id, idx, "write_file", step["path"], 0,
-                     stdout_msg, "passed", duration_ms),
-                )
-                conn.commit()
-
-                self._emit_event(run_id, {
-                    "type": "step_output",
-                    "result_id": result_id,
-                    "step_index": idx,
-                    "line": f"📝 Wrote file ({method_label}): {step['path']}",
-                })
-                if shot_path and not shot_saved:
-                    reason = (getattr(self, "_last_capture_error", None)
-                              or getattr(self, "_last_notepad_error", None)
-                              or "unknown error")
-                    self._emit_event(run_id, {
-                        "type": "step_output",
-                        "result_id": result_id,
-                        "step_index": idx,
-                        "line": f"[warn] Notepad screenshot failed: {reason}",
-                    })
-
+            outcome = run_step(step, replace(ctx, log=self._step_log(run_id, result_id, idx)),
+                               shell, desktop)
+            if outcome.status == CANCELLED:
+                return (False, had_warnings)
+            record(idx, outcome)
+            if outcome.new_cwd:
+                ctx = replace(ctx, cwd=outcome.new_cwd)
+            if outcome.status == FAILED:
+                all_passed = False
+            elif outcome.status == WARNING:
+                had_warnings = True
+            if outcome.stops_test:
+                break
         return (all_passed, had_warnings)
 
-    def _write_file_via_notepad(self, filepath: str, content: str, screenshot_path: str = None) -> bool:
-        """
-        Write file content, open it in Notepad to display, then close.
-        If screenshot_path is given, capture the screen (with Notepad in the
-        foreground) into that path before closing, as a checkpoint record.
+    def _step_log(self, run_id: str, result_id: str, idx: int):
+        """The log callback for one Step: each line becomes a step_output event."""
+        def log(line: str, is_command: bool = False):
+            event = {"type": "step_output", "result_id": result_id, "step_index": idx, "line": line}
+            if is_command:
+                event["is_command"] = True
+            self._emit_event(run_id, event)
+        return log
+
+    def _show_in_notepad(self, filepath: str, screenshot_path: Optional[str]) -> Optional[str]:
+        """Open a written file in Notepad so it shows, then close Notepad.
+        If screenshot_path is given, capture the Notepad window into that path
+        before closing, as a checkpoint record.
 
         Uses plain subprocess instead of GUI automation libraries. Those libraries
         are unreliable in a windowed PyInstaller build (and may not be bundled).
-        Before, this made the code silently fall back to a direct write with no
-        screenshot. Returns True if Notepad was opened, False otherwise. The
-        reason for any failure is stored in self._last_notepad_error.
+        Returns None when it worked, else the failure reason.
         """
-        self._last_notepad_error = None
-
-        # Write the actual content to the file first
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        if sys.platform != "win32":
-            self._last_notepad_error = "not supported on non-Windows"
-            return False
-
         notepad_exe = os.path.join(
             os.environ.get("SystemRoot", r"C:\Windows"), "System32", "notepad.exe"
         )
-        proc = None
         try:
             # Redirect all standard streams. A windowed (console=False) build has
             # no valid stdin handle, so an un-redirected launch fails outright.
@@ -1987,8 +1512,7 @@ class TestExecutor:
                 stderr=subprocess.DEVNULL,
             )
         except Exception as e:
-            self._last_notepad_error = f"could not launch notepad: {type(e).__name__}: {e}"
-            return False
+            return f"could not launch notepad: {type(e).__name__}: {e}"
 
         try:
             # Give Notepad a moment to start. _capture_screen then polls for its
@@ -1996,16 +1520,14 @@ class TestExecutor:
             # the window never gets foreground focus.
             time.sleep(0.4)
             if screenshot_path:
-                self._capture_screen(screenshot_path, pid=proc.pid,
-                                     title_hint=os.path.basename(filepath),
-                                     maximize=True)
-            else:
-                # Brief pause so the user can see the file content.
-                time.sleep(0.6)
-            return True
+                return self._capture_screen(screenshot_path, pid=proc.pid,
+                                            title_hint=os.path.basename(filepath),
+                                            maximize=True)
+            # Brief pause so the user can see the file content.
+            time.sleep(0.6)
+            return None
         except Exception as e:
-            self._last_notepad_error = f"{type(e).__name__}: {e}"
-            return False
+            return f"{type(e).__name__}: {e}"
         finally:
             # Close the Notepad window we opened with a force kill. The file is
             # already saved, so there is nothing to prompt about.
@@ -2030,128 +1552,7 @@ class TestExecutor:
         except Exception:
             pass
 
-    def _run_in_console(
-        self, run_id: str, cmd: str, cwd: str, timeout: int,
-        cancel_flag: threading.Event
-    ) -> tuple:
-        """
-        Run a command in the visible console window and capture its output.
-        Returns (stdout, stderr, exit_code).
-        """
-        console_dir = self._console_procs.get(run_id)
-
-        if not console_dir:
-            # No console is available, so run the command directly (fallback).
-            return self._run_direct(cmd, cwd, timeout, cancel_flag, run_id)
-
-        # Temp files for capturing output and exit code
-        stdout_file = os.path.join(console_dir, "stdout.tmp")
-        exitcode_file = os.path.join(console_dir, "exitcode.tmp")
-
-        # Clean up any old result files
-        for f in [stdout_file, exitcode_file]:
-            if os.path.exists(f):
-                os.unlink(f)
-
-        # Build wrapper commands that:
-        # 1. cd to the working directory
-        # 2. Run the command (output shows in console)
-        # 3. Tee output to a file for the app to read
-        # 4. Write exit code to a file
-        cmd_file = os.path.join(console_dir, "commands.txt")
-        scr = self._screenshot_dir(run_id)
-        try:
-            # Write a dedicated wrapper batch that captures exit code reliably
-            wrapper_file = os.path.join(console_dir, "runcmd.bat")
-            with open(wrapper_file, "w", encoding="utf-8") as wf:
-                wf.write("@echo off\n")
-                wf.write("set MSBUILDTERMINALLOGGER=on\n")
-                # Rebuild PATH from the pristine baseline for every command, so a
-                # per-test SDK folder pinned earlier is not on PATH for a later
-                # test that uses the default SDK. Fall back to %PATH% if the
-                # baseline wasn't captured (for example, an older console).
-                wf.write('if defined TESTRUNNER_BASE_PATH set "PATH=%TESTRUNNER_BASE_PATH%"\n')
-                # The spawned console's PATH may lack System32, so bare tools
-                # like `powershell` aren't found (same reason chcp uses a full
-                # path). Add the core Windows directories to PATH.
-                wf.write('set "PATH=%PATH%;%SystemRoot%\\System32;%SystemRoot%\\System32\\WindowsPowerShell\\v1.0"\n')
-                if scr:
-                    wf.write(f'set "SCREENSHOT_DIR={scr}"\n')
-                wf.write(self._sdk(run_id).bat_prelude())
-                wf.write(f"cd /d {cwd}\n")
-                wf.write(f"echo {cwd}^> {cmd}\n")
-                # Capture the real exit code. The previous
-                # `cmd && echo 0 || echo 1` form changed every failure to
-                # 1, so a step with expected_exit_code: 1 passed on *any*
-                # error (including 9009, command not found). %ERRORLEVEL% is
-                # expanded when this line is read, and each statement is on
-                # its own line rather than in a parenthesised block, so no
-                # delayed expansion is needed. The space before `>` is
-                # required: `echo 1>file` would parse the digit as a stream
-                # number and write "ECHO is off." instead of the code.
-                wf.write(f'{cmd} > "{stdout_file}" 2>&1\n')
-                wf.write(f'echo %ERRORLEVEL% > "{exitcode_file}"\n')
-                wf.write(f'type "{stdout_file}"\n')
-                wf.write("echo.\n")
-            # Tell the console to call the wrapper
-            with open(cmd_file, "a", encoding="utf-8") as f:
-                f.write(f'call "{wrapper_file}"\n')
-        except Exception:
-            return self._run_direct(cmd, cwd, timeout, cancel_flag, run_id)
-
-        # Wait for the exit code file to appear (this means the command finished)
-        deadline = time.time() + timeout
-        while not os.path.exists(exitcode_file):
-            if cancel_flag.is_set():
-                return ("", "", -1)
-            if time.time() > deadline:
-                # Keep what the command printed so far, so a slow step is not
-                # mistaken for a hang (for example, `dotnet workload install maui`).
-                partial = ""
-                try:
-                    with open(stdout_file, "r", encoding="utf-8", errors="replace") as f:
-                        partial = f.read()
-                except OSError:
-                    pass
-                return (_render_terminal_output(partial),
-                        f"Timed out after {timeout}s. The command is still running in "
-                        "the test console window; wait for it or press Ctrl+C there "
-                        "before the next run.", -1)
-            time.sleep(0.5)
-
-        # Wait a short time so the console finishes writing the files.
-        time.sleep(0.3)
-
-        # Read captured output
-        stdout_text = ""
-        exit_code = -1
-
-        try:
-            if os.path.exists(stdout_file):
-                with open(stdout_file, "r", encoding="utf-8", errors="replace") as f:
-                    stdout_text = f.read()
-            if os.path.exists(exitcode_file):
-                with open(exitcode_file, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read().strip()
-                    if content:
-                        exit_code = int(content)
-        except (ValueError, OSError):
-            pass
-
-        # Cleanup result files for next command
-        for f in [stdout_file, exitcode_file]:
-            try:
-                if os.path.exists(f):
-                    os.unlink(f)
-            except OSError:
-                pass
-
-        return (_render_terminal_output(stdout_text), "", exit_code)
-
-    def _run_long_running(
-        self, run_id: str, result_id: str, idx: int, cmd: str, cwd: str,
-        step: dict, cancel_flag: threading.Event, timeout: int, test_name: str = ""
-    ) -> tuple:
+    def _run_long_running(self, run_id: str, cmd: str, step: dict, ctx: StepContext) -> tuple:
         """
         Start a long-running server command, stream its output live to BOTH the app
         panel and the popup console, wait for a readiness pattern, optionally
@@ -2162,6 +1563,9 @@ class TestExecutor:
         PowerShell script, so the console streams the same output as the panel in
         real time.
         """
+        cwd = ctx.cwd
+        cancel_flag = ctx.cancel
+        timeout = step.get("timeout", 120)
         ready_patterns = step.get("ready_pattern") or []
         if isinstance(ready_patterns, str):
             ready_patterns = [ready_patterns]
@@ -2183,7 +1587,7 @@ class TestExecutor:
         done_flag = None
 
         if live:
-            srv_log = os.path.join(console_dir, f"srv_{idx}_{uuid.uuid4().hex[:8]}.log")
+            srv_log = os.path.join(console_dir, f"srv_{uuid.uuid4().hex[:8]}.log")
             done_flag = srv_log + ".done"
             for p in (srv_log, done_flag):
                 if os.path.exists(p):
@@ -2197,15 +1601,9 @@ class TestExecutor:
                 log_fh = None
             if log_fh:
                 tail_ps1 = self._write_tail_script(console_dir)
-                # Use the full path. The spawned console's PATH may lack System32,
-                # so bare `powershell` isn't found (same reason chcp uses a full path).
-                ps_exe = os.path.join(
-                    os.environ.get("SystemRoot", r"C:\Windows"),
-                    "System32", "WindowsPowerShell", "v1.0", "powershell.exe",
-                )
                 self._queue_console_cmd(
                     run_id,
-                    f'"{ps_exe}" -NoProfile -ExecutionPolicy Bypass -File "{tail_ps1}" "{srv_log}" "{done_flag}"',
+                    f'"{self._powershell_exe()}" -NoProfile -ExecutionPolicy Bypass -File "{tail_ps1}" "{srv_log}" "{done_flag}"',
                 )
 
         def write_log(text):
@@ -2230,9 +1628,9 @@ class TestExecutor:
                     open(done_flag, "w").close()
                 except OSError:
                     pass
-            return (_render_terminal_output("".join(lines)), exit_code)
+            return (render_terminal_output("".join(lines)), exit_code)
 
-        env = self._sdk_env(run_id)
+        env = ctx.env()
         env["DOTNET_CLI_COLORS"] = "1"
         env["FORCE_COLOR"] = "1"
 
@@ -2251,12 +1649,7 @@ class TestExecutor:
             for line in proc.stdout:
                 lines.append(line)
                 write_log(line)
-                self._emit_event(run_id, {
-                    "type": "step_output",
-                    "result_id": result_id,
-                    "step_index": idx,
-                    "line": line.rstrip("\n"),
-                })
+                ctx.log(line.rstrip("\n"))
                 if not ready.is_set() and any(p in line for p in ready_patterns):
                     ready.set()
 
@@ -2284,13 +1677,10 @@ class TestExecutor:
                 if proc.poll() is not None:
                     t.join(timeout=2)
                     return finish(proc.returncode or 0)
-                if (not gui_shot_done and sys.platform == "win32"
-                        and step.get("screenshot") and time.time() >= gui_shot_at):
+                if (not gui_shot_done and step.get("screenshot")
+                        and time.time() >= gui_shot_at):
                     gui_shot_done = True
-                    self._capture_gui_window(
-                        run_id, result_id, idx, proc.pid, test_name, cwd,
-                        write_log, lines, step,
-                    )
+                    self._capture_gui_window(ctx, proc.pid, write_log, lines, step)
                 time.sleep(0.2)
             self._terminate_proc(proc)
             t.join(timeout=2)
@@ -2321,12 +1711,7 @@ class TestExecutor:
         if verify_url:
             ok, status, body, err = self._verify_site(verify_url, contains)
             msg = f"GET {verify_url} -> HTTP {status}" + (f" | {err}" if err else "")
-            self._emit_event(run_id, {
-                "type": "step_output",
-                "result_id": result_id,
-                "step_index": idx,
-                "line": ("✅ " if ok else "❌ ") + msg,
-            })
+            ctx.log(("✅ " if ok else "❌ ") + msg)
             log_msg = "\n" + ("[OK] " if ok else "[FAIL] ") + msg + "\n"
             lines.append(log_msg)
             write_log(log_msg)
@@ -2346,41 +1731,28 @@ class TestExecutor:
             # showing the hosted site (Windows only) into the run's screenshot
             # folder so it appears in the Screenshots tab. Give the page a moment
             # to render, then grab the browser window (cropped).
-            if step.get("screenshot") and sys.platform == "win32":
+            if step.get("screenshot"):
                 shot_deadline = time.time() + 4
                 while time.time() < shot_deadline and not cancel_flag.is_set():
                     time.sleep(0.2)
-                scr = self._screenshot_dir(run_id)
-                if scr:
-                    def _slug(s):
-                        return re.sub(r"[^A-Za-z0-9_-]+", "-", (s or "")).strip("-")
-                    hostport = re.sub(r"^https?://", "", verify_url)
-                    label = step.get("label") or hostport
-                    base = "-".join(p for p in (_slug(test_name), _slug(label)) if p) or "browser"
-                    shot_path = os.path.join(
-                        scr, f"{base}-{time.strftime('%Y%m%d-%H%M%S')}.png"
-                    )
+                hostport = re.sub(r"^https?://", "", verify_url)
+                shot_path = ctx.screenshot_path(step.get("label") or hostport, "browser")
+                if shot_path:
                     # Match the browser window by its host:port (the tab title for
                     # the minimal web/webapi pages is the URL). For pages with a
                     # custom title (for example, the MVC "Home Page"), fall back to
                     # the foreground window (the browser we just opened).
-                    hint = re.sub(r"^https?://", "", verify_url).split("/")[0]
-                    saved = self._capture_screen(
+                    hint = hostport.split("/")[0]
+                    err = self._capture_screen(
                         shot_path, title_hint=hint, foreground_fallback=True,
                         exclude_title=OWN_WINDOW_TITLE,
                     )
-                    if saved:
+                    if not err:
                         msg = f"📸 Browser screenshot saved: {os.path.basename(shot_path)}"
                         lines.append("\n" + msg + "\n")
                         write_log("\n" + msg + "\n")
                     else:
-                        reason = getattr(self, "_last_capture_error", None) or "unknown error"
-                        self._emit_event(run_id, {
-                            "type": "step_output",
-                            "result_id": result_id,
-                            "step_index": idx,
-                            "line": f"[warn] Browser screenshot failed: {reason}",
-                        })
+                        ctx.log(f"[warn] Browser screenshot failed: {err}")
             hold_deadline = time.time() + hold_seconds
             while time.time() < hold_deadline and not cancel_flag.is_set():
                 time.sleep(0.2)
@@ -2453,70 +1825,11 @@ class TestExecutor:
             except Exception:
                 pass
 
-    def _run_direct(
-        self, cmd: str, cwd: str, timeout: int,
-        cancel_flag: threading.Event, run_id: str
-    ) -> tuple:
-        """Fallback: run command directly when no console is available."""
-        stdout_lines = []
-        stderr_lines = []
-        exit_code = -1
-
-        try:
-            env = self._sdk_env(run_id)
-            env["DOTNET_CLI_COLORS"] = "1"
-            env["DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION"] = "1"
-            env["FORCE_COLOR"] = "1"
-            env["TERM"] = "xterm-256color"
-            env["MSBUILDTERMINALLOGGER"] = "on"
-
-            proc = subprocess.Popen(
-                cmd, shell=True, cwd=cwd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace", env=env,
-            )
-
-            def read_stdout():
-                for line in proc.stdout:
-                    stdout_lines.append(line)
-
-            def read_stderr():
-                for line in proc.stderr:
-                    stderr_lines.append(line)
-
-            t1 = threading.Thread(target=read_stdout, daemon=True)
-            t2 = threading.Thread(target=read_stderr, daemon=True)
-            t1.start()
-            t2.start()
-
-            deadline = time.time() + timeout
-            while proc.poll() is None:
-                if cancel_flag.is_set():
-                    proc.terminate()
-                    return ("", "", -1)
-                if time.time() > deadline:
-                    proc.terminate()
-                    return (_render_terminal_output("".join(stdout_lines)),
-                            "".join(stderr_lines) + f"Timed out after {timeout}s. "
-                            f"Stopped the shell (PID {proc.pid}); child processes "
-                            "it started may still be running.", -1)
-                time.sleep(0.1)
-
-            t1.join(timeout=5)
-            t2.join(timeout=5)
-            exit_code = proc.returncode if proc.returncode is not None else -1
-
-        except Exception as e:
-            stderr_lines.append(str(e))
-
-        return (_render_terminal_output("".join(stdout_lines)), "".join(stderr_lines), exit_code)
-
-    def _capture_environment(self, run_id: str = None) -> str:
-        dotnet = self._sdk(run_id).dotnet_exe()
-        env = self._sdk_env(run_id) if run_id else None
+    def _capture_environment(self, sdk: sdk_source.SdkContext) -> str:
         try:
             result = subprocess.run(
-                [dotnet, "--info"], capture_output=True, text=True, timeout=30, env=env,
+                [sdk.dotnet_exe(), "--info"], capture_output=True, text=True, timeout=30,
+                env=sdk.env(),
             )
             return result.stdout
         except Exception as e:

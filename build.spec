@@ -22,6 +22,7 @@ a = Analysis(
         'yaml',
         'sqlite3',
         'executor',
+        'steps',
         'results_export',
         'db_store',
         'sdk_source',
