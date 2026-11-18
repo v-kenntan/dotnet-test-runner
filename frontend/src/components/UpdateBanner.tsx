@@ -3,7 +3,7 @@ import { applyUpdate, fetchUpdateStatus, UpdateStatus } from '../api';
 
 /**
  * Offers the latest GitHub Release when it differs from this build (issue #89).
- * `checkRequest` goes up each time the user clicks "Check for updates"; 0 is the launch check.
+ * `checkRequest` goes up each time the user clicks "Check for updates". 0 is the launch check.
  */
 export default function UpdateBanner({ isRunning, checkRequest, onVersion }: {
   isRunning: boolean;
@@ -44,7 +44,7 @@ export default function UpdateBanner({ isRunning, checkRequest, onVersion }: {
     }
     setNote('Updating, the app will restart.');
     window.close();
-    // Shown only if the browser did not let the page close its own window.
+    // The app shows this only if the browser did not let the page close its own window.
     setTimeout(() => setNote('Updating, the app will restart. You can close this window.'), 2000);
   };
 

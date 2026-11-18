@@ -3,10 +3,10 @@ tests:
   category: Sample Projects
   title: 14. Build and run a bundled sample project
   description: >-
-    Copy the bundled sample console app + class libraries shipped under
-    test_assets/samples/<tfm> for the SDK under test, then build and run it via
-    both the dll and the apphost. Requires a test_assets/samples/<tfm> folder
-    for the selected SDK.
+    Copy the bundled sample console app and class libraries from
+    test_assets/samples/<tfm> for the SDK under test. Then build the app and run
+    it through both the dll and the apphost. This test requires a
+    test_assets/samples/<tfm> folder for the selected SDK.
   steps:
   - type: command
     command: xcopy /e /i /q "{assets}\samples\{tfm}" sample

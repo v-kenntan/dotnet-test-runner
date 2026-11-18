@@ -3,9 +3,9 @@ import { ResultsDestination, fetchResultsDestination } from '../api';
 
 /** Where finished runs are exported to.
  *
- * Testers run this on a throwaway VM, so a local-only destination means the
- * results die with the machine. That case is called out loudly rather than
- * left for someone to discover after the VM is gone.
+ * Testers run this on a throwaway VM. With a local-only destination, deleting
+ * the VM deletes the results. So the banner warns about that case before the
+ * VM is gone.
  */
 export default function ResultsDestinationBanner() {
   const [dest, setDest] = useState<ResultsDestination | null>(null);
@@ -25,7 +25,7 @@ export default function ResultsDestinationBanner() {
         <code>{dest.root}</code>
         {dest.persistent
           ? null
-          : ` — they will be lost when this machine is gone. Set ${dest.env_var} to a OneDrive folder or network share.`}
+          : `. They are lost when this machine is deleted. Set ${dest.env_var} to a OneDrive folder or network share.`}
       </span>
     </div>
   );

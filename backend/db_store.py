@@ -1,19 +1,20 @@
-"""Where the live database (and the screenshots beside it) is kept.
+"""Where the app keeps the live database and the screenshots beside it.
 
-Testers get a fresh VM per .NET build and rebuild the app often, so a database
-sitting next to the exe is wiped by the next build and dies with the VM. When a
-persistent destination is available - OneDrive, a UNC share, or an explicit
-``DTR_RESULTS_DIR`` - the live DB is kept there instead, under ``history/``, so
-run history carries across rebuilds and across VMs.
+Testers get a fresh VM per .NET build and rebuild the app often. The next build
+wipes a database that sits next to the exe, and the VM takes it with it when it
+goes. A persistent destination is OneDrive, a UNC share, or an explicit
+``DTR_RESULTS_DIR``. When one is available, the app keeps the live DB there
+instead, under ``history/``, so run history carries across rebuilds and VMs.
 
-One shared DB, not one per machine: a VM is created per test pass, so a
+There is one shared DB, not one per machine. Each test pass gets a new VM, so a
 per-machine file would start every pass with an empty history. That is safe
-because only one machine runs at a time. Two machines writing the same OneDrive
-folder concurrently is *not* supported - OneDrive would make conflict copies.
+because only one machine runs at a time. The app does not support two machines
+that write to the same OneDrive folder at the same time. OneDrive would make
+conflict copies.
 
-``DTR_DB_PATH`` overrides everything with an explicit file path. If the chosen
-destination cannot be written (offline share, read-only folder) the DB falls
-back to its old place next to the exe, so the app always starts.
+``DTR_DB_PATH`` overrides everything with an explicit file path. If the app
+cannot write to the chosen destination (offline share, read-only folder), the DB
+falls back to its old place next to the exe, so the app always starts.
 """
 
 import os
@@ -141,11 +142,11 @@ def screenshots_dir():
 
 
 def checkpoint():
-    """Fold the write-ahead log back into the DB file.
+    """Merge the write-ahead log (-wal) back into the DB file.
 
     A synced folder copies each file independently, so a run must not finish
-    with committed pages left in the -wal: OneDrive could upload the .db and
-    the -wal at different times and hand the next VM an inconsistent pair.
+    with committed pages left in the -wal. OneDrive could upload the .db and
+    the -wal at different times and give the next VM a pair that does not match.
     """
     try:
         conn = sqlite3.connect(db_path())
@@ -154,4 +155,4 @@ def checkpoint():
         finally:
             conn.close()
     except sqlite3.Error:
-        pass  # Never let housekeeping fail a finished run.
+        pass          # Never let cleanup fail a finished run.

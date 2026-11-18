@@ -3,9 +3,9 @@ import { ansiConverter } from '../ansi'
 
 interface Props {
   logs: string[];
-  /** Follow new output. Off for finished runs, where the top is the useful end. */
+  /** Scroll to new output. Off for finished runs, where the user reads from the top. */
   autoScroll?: boolean;
-  /** Styling hook — the history view has its own log-pane layout. */
+  /** Extra CSS class. The history view has its own log-pane layout. */
   className?: string;
 }
 

@@ -42,8 +42,8 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-    # Exit code 1 also covers aborted runs and build errors, so require the
-    # framework to have actually reported the one deliberately failing test.
+    # Exit code 1 also covers aborted runs and build errors. So require the
+    # framework to report the one test that fails on purpose.
     assert_output_matches:
     - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
   sort_order: 7
@@ -97,8 +97,8 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-    # Exit code 1 also covers aborted runs and build errors, so require the
-    # framework to have actually reported the one deliberately failing test.
+    # Exit code 1 also covers aborted runs and build errors. So require the
+    # framework to report the one test that fails on purpose.
     assert_output_matches:
     - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
   sort_order: 8
@@ -144,8 +144,8 @@ tests:
   - type: command
     command: dotnet test
     expected_exit_code: 1
-    # Exit code 1 also covers aborted runs and build errors, so require the
-    # framework to have actually reported the one deliberately failing test.
+    # Exit code 1 also covers aborted runs and build errors. So require the
+    # framework to report the one test that fails on purpose.
     assert_output_matches:
     - '(?im)\bfailed:\s*1\b|^\s*Failed \S+ \['
   sort_order: 9

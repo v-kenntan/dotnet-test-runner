@@ -15,7 +15,7 @@ import UpdateBanner from './components/UpdateBanner'
 
 type View = 'dashboard' | 'tests' | 'running' | 'history_detail' | 'editor';
 
-// Tests tabs; every tab but "all" shows the tests whose `suites` include its key.
+// The Tests tabs. Every tab except "all" shows the tests whose `suites` include its key.
 type SuiteTab = 'all' | 'cli' | 'sanity';
 const SUITE_TABS: [SuiteTab, string][] = [['all', 'All'], ['cli', 'CLI'], ['sanity', 'Sanity Check']];
 
@@ -23,16 +23,16 @@ const BASE_TITLE = '.NET SDK Test Runner';
 // Gets " (v1.07b)" once UpdateBanner's launch check returns the version.
 let appTitle = BASE_TITLE;
 
-/** Sentinel option value for an SDK pinned by path rather than discovered. */
+/** Option value for an SDK that the user pinned by path, not one the app found. */
 const CUSTOM_SDK = '__custom_sdk__';
-/** Sentinel option value that opens the path entry box. */
+/** Option value that opens the path entry box. */
 const PICK_SDK_PATH = '__pick_sdk_path__';
 
 /** Steps that host or browse an HTTPS site need a trusted dev certificate. */
 const HTTPS_STEP_RE = /dev-certs\s+https|https:\/\/localhost/i;
 
 // The machine's native architecture and the dotnet host's RID differ for a
-// non-native SDK (e.g. win-x86 on an x64 machine), so show both, labelled.
+// non-native SDK (for example, win-x86 on an x64 machine), so show both, with labels.
 function archLabel(machineArch: string | null, rid: string | undefined): string {
   return `${machineArch ? ` | machine: ${machineArch}` : ''}${rid ? ` | SDK: ${rid}` : ''}`;
 }
@@ -75,10 +75,10 @@ export default function App() {
   const [sdkPathBusy, setSdkPathBusy] = useState(false);
   const [sdkPathError, setSdkPathError] = useState<string | null>(null);
   // Missing NuGet feeds make restores fail with NU1102, which looks like a test
-  // failure, so the config is editable from the banner (issue #64).
+  // failure, so the banner has buttons to edit the config (issue #64).
   const [nugetOpen, setNugetOpen] = useState(false);
   // Testers paste a full feed configuration, so the main button opens the file
-  // itself in Notepad; the panel stays behind "Feeds…" (issue #76).
+  // itself in Notepad. The panel opens from "Feeds…" (issue #76).
   const handleOpenNuGetConfig = async () => {
     try {
       const r = await openNuGetConfig();
@@ -98,8 +98,8 @@ export default function App() {
   const headerRef = useRef<HTMLElement>(null);
 
   // The header is pinned, so anything else that sticks (the tests toolbar) has
-  // to start below it. Its height changes with the SDK banner, so publish the
-  // measured value instead of hard-coding an offset.
+  // to start below it. Its height changes with the SDK banner, so store the
+  // measured height in --header-h instead of hard-coding an offset.
   useEffect(() => {
     const header = headerRef.current;
     if (!header) return;
@@ -120,7 +120,7 @@ export default function App() {
   // Tests in the current tab matching the search box. Matches on what a tester
   // is likely to remember about a case: its name, what it does, and the
   // commands it runs. Every whitespace-separated term must match, so
-  // "workload repair" narrows instead of widening.
+  // "workload repair" shows fewer tests, not more.
   const visibleTests = useMemo(() => {
     const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return suiteTests;
@@ -143,7 +143,7 @@ export default function App() {
       const [env, sdkData] = await Promise.all([fetchEnvironment(), fetchSdks()]);
       const sdks = sdkData.sdks || [];
       setSdkList(sdks);
-      // Only consider SDK "found" if dotnet --info succeeds AND at least one SDK is installed
+      // The SDK counts as found only if dotnet --info succeeds and at least one SDK is installed.
       setSdkInfo(env.exit_code === 0 && sdks.length > 0 ? env.output : null);
       setMachineArch(env.machine_arch || null);
       if (sdks.length > 0) {
@@ -160,7 +160,7 @@ export default function App() {
     refreshSdk();
   }, []);
 
-  // Refresh runs whenever navigating back to dashboard
+  // Reload the runs each time the user goes back to the dashboard.
   useEffect(() => {
     if (view === 'dashboard') {
       fetchRuns().then(setRuns);
@@ -233,9 +233,9 @@ export default function App() {
           setRunStatus('completed');
           setSummary(event.summary as { passed: number; failed: number; skipped: number });
           setLogs(prev => [...prev, `\n✅ Run complete: ${JSON.stringify(event.summary)}`]);
-          // The window is often buried behind a test's Notepad/browser window,
-          // so mark completion in the title too (issue #67 — the backend also
-          // pops a foreground message box).
+          // A test's Notepad or browser window often covers this window, so
+          // also show completion in the title (issue #67). The backend also
+          // shows a foreground message box.
           const cancelled = event.status === 'cancelled';
           const failed = (event.summary as { failed: number }).failed;
           const icon = cancelled ? '⛔' : failed ? '❌' : '✅';
@@ -246,8 +246,8 @@ export default function App() {
     });
   }, [tests]);
 
-  // Gate: tests that host HTTPS sites (test cases 4 and 9) pop a Windows trust
-  // dialog mid-run when no dev certificate is trusted. Prompt for it up front.
+  // Tests that host HTTPS sites (test cases 4 and 9) open a Windows trust dialog
+  // during the run when no dev certificate is trusted. Ask before the run starts.
   const runTests = useCallback(async (ids: string[], sdkVersion?: string, sdkPath?: string) => {
     const httpsTests = tests.filter(t => ids.includes(t.id) && needsDevCert(t));
     if (httpsTests.length > 0) {
@@ -303,7 +303,7 @@ export default function App() {
 
   const handleViewRun = useCallback(async (run: TestRun) => {
     const { results } = await fetchRunDetails(run.id);
-    // Enrich results with test titles
+    // Add the test title and category to each result.
     const enrichedResults = (results as any[]).map(r => {
       const test = tests.find(t => t.id === r.test_case_id);
       return { ...r, title: test?.title || r.test_case_id, category: test?.category || '' };
@@ -452,7 +452,7 @@ export default function App() {
               <button
                 className="sdk-refresh-btn"
                 onClick={() => setNugetOpen(true)}
-                title="Check the required NuGet feeds are configured (avoids NU1102 restore errors)"
+                title="Check that the required NuGet feeds are configured. Missing feeds cause NU1102 restore errors."
               >
                 Feeds…
               </button>
@@ -463,7 +463,7 @@ export default function App() {
                   className="sdk-path-input"
                   autoFocus
                   value={sdkPathInput}
-                  placeholder="e.g. C:\dotnet-sdk-11.0.100-win-x64.zip — or a folder containing dotnet.exe"
+                  placeholder="For example C:\dotnet-sdk-11.0.100-win-x64.zip, or a folder that contains dotnet.exe"
                   onChange={e => { setSdkPathInput(e.target.value); setSdkPathError(null); }}
                   onKeyDown={e => {
                     if (e.key === 'Enter') handleUseSdkPath();
@@ -482,7 +482,7 @@ export default function App() {
         ) : (
           <div className="sdk-banner sdk-missing">
             <span className="sdk-icon">⚠</span>
-            <span className="sdk-text">No .NET SDK detected — install one and click Retry</span>
+            <span className="sdk-text">No .NET SDK found. Install one and click Retry.</span>
             <div className="sdk-actions">
               <button className="sdk-refresh-btn" onClick={refreshSdk} disabled={sdkLoading}>
                 {sdkLoading ? '⏳' : '↻'} Retry
@@ -543,7 +543,7 @@ export default function App() {
             {(search || hiddenSelected > 0) && (
               <p className="search-status">
                 {search && `Showing ${visibleTests.length} of ${suiteTests.length} tests`}
-                {search && hiddenSelected > 0 && ' — '}
+                {search && hiddenSelected > 0 && '. '}
                 {hiddenSelected > 0 &&
                   `${hiddenSelected} selected test${hiddenSelected > 1 ? 's are' : ' is'} hidden by the ${search ? 'search or tab' : 'tab'} and will still run`}
               </p>

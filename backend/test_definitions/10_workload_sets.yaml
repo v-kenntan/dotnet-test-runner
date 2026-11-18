@@ -1,19 +1,19 @@
 # Workload Sets (test plan: "Workload sets").
 #
-# These cases run as one continuous sequence (`continuous: true`): they share a
-# single working directory and, if one fails, the rest are skipped instead of
-# running against a half-updated machine.
+# These cases run as one continuous sequence (`continuous: true`). They share a
+# single working directory. If one fails, the app skips the rest instead of
+# running them against a half-updated machine.
 #
-# Four of them update/install a *specific* workload set version. That version
-# only exists on the workloads feed, so it cannot be derived — open the test in
-# the editor and fill in "Workload set version" before running. The steps below
-# reference it as {workload_version}.
+# Four of them update or install a specific workload set version. That version
+# only exists on the workloads feed, so the app cannot derive it. Open the test
+# in the editor and fill in "Workload set version" before running. The steps
+# below reference it as {workload_version}.
 tests:
 - id: workload-sets-update-latest-exe
   category: Workload Sets
   title: Update to latest workload set (exe)
   description: Install MAUI, switch to workload-set mode, and update to the latest
-    workload set. No version needed — this one takes whatever is newest.
+    workload set. This test does not need a version. It uses the newest workload set.
   machine_mutating: true
   continuous: true
   steps:
@@ -25,7 +25,8 @@ tests:
     command: dotnet workload list
   - type: command
     command: dotnet workload install maui
-    # MAUI pulls ~40 MSIs; 600s timed out mid-install on a clean machine.
+    # MAUI installs about 40 MSIs. A 600s timeout expired during the install on a
+    # clean machine.
     timeout: 1800
   - type: command
     command: dotnet workload --info
@@ -45,8 +46,9 @@ tests:
   category: Workload Sets
   title: Update to specific workload set (exe)
   description: 'Switch back to manifest mode, then update to a chosen workload set
-    version. Requires the "Workload set version" field (e.g. 8.0.400) — pick one
-    from the `dotnet workload search version` output of a previous run.'
+    version. This test requires the "Workload set version" field, for example
+    8.0.400. Pick a version from the `dotnet workload search version` output of a
+    previous run.'
   machine_mutating: true
   continuous: true
   steps:
@@ -76,8 +78,9 @@ tests:
 - id: workload-sets-pin-specific-exe
   category: Workload Sets
   title: Pin to specific workload set (exe)
-  description: 'Pin a workload set through global.json: create one, add
-    "workloadVersion", then update. Requires the "Workload set version" field.'
+  description: 'Pin a workload set version through global.json. The test creates a
+    global.json file, adds "workloadVersion", and then updates. This test requires
+    the "Workload set version" field.'
   machine_mutating: true
   continuous: true
   steps:
@@ -92,8 +95,8 @@ tests:
     command: cd MyTest
   - type: command
     command: dotnet new global.json --force
-  # Same layout as the docs: workloadVersion must sit under "sdk", or the SDK
-  # ignores it (issue #92).
+  # This is the same layout as the docs. workloadVersion must be under "sdk", or
+  # the SDK ignores it (issue #92).
   # https://learn.microsoft.com/dotnet/core/tools/dotnet-workload-sets#use-globaljson-for-the-workload-set-version
   - type: write_file
     path: global.json
@@ -148,8 +151,9 @@ tests:
   category: Workload Sets
   title: Update workload sets from different band (exe)
   description: 'Update to a workload set from a different feature band than the SDK.
-    Set "Workload set version" to a version one band below the SDK — 8.0.3xx on an
-    8.0.4xx SDK, 9.0.2xx on a 9.0.3xx SDK, 10.0.1xx on a 10.0.2xx SDK.'
+    Set "Workload set version" to a version one band below the SDK. For example,
+    use 8.0.3xx on an 8.0.4xx SDK, 9.0.2xx on a 9.0.3xx SDK, or 10.0.1xx on a
+    10.0.2xx SDK.'
   machine_mutating: true
   continuous: true
   steps:

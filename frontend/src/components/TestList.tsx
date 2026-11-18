@@ -16,8 +16,8 @@ interface Props {
 }
 
 /**
- * Inline "SDK folder" picker for tests that are only meaningful against a
- * pinned SDK install (the zip-install workload cases). It writes to the same
+ * Inline "SDK folder" picker for tests that need a pinned SDK install (the
+ * zip-install workload cases). It writes to the same
  * `sdk_path` field as the editor's own SDK folder box, so the two stay in sync.
  */
 function InlineSdkPath({ test, onSdkPathChange }: { test: TestCase; onSdkPathChange: Props['onSdkPathChange'] }) {
@@ -26,9 +26,9 @@ function InlineSdkPath({ test, onSdkPathChange }: { test: TestCase; onSdkPathCha
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [error, setError] = useState('');
 
-  // Re-sync when the test is reloaded (e.g. after saving it in the editor).
-  // Only the value is reset: clearing `status` here would wipe the "Saved"
-  // note the moment our own save refreshes the test.
+  // Re-sync when the test reloads, for example after a save in the editor.
+  // Reset only the value. If this also cleared `status`, our own save would
+  // refresh the test and remove the "Saved" note at once.
   useEffect(() => {
     setValue(saved);
   }, [saved]);
@@ -63,7 +63,7 @@ function InlineSdkPath({ test, onSdkPathChange }: { test: TestCase; onSdkPathCha
         <input
           id={`sdk-path-${test.id}`}
           value={value}
-          placeholder="e.g. C:\dotnet-zip — folder containing dotnet.exe. Blank = default (PATH) SDK."
+          placeholder="For example C:\dotnet-zip, the folder that contains dotnet.exe. Leave blank for the default (PATH) SDK."
           onChange={e => { setValue(e.target.value); setStatus('idle'); setError(''); }}
           onBlur={e => save(e.target.value)}
           onKeyDown={e => {
@@ -76,7 +76,7 @@ function InlineSdkPath({ test, onSdkPathChange }: { test: TestCase; onSdkPathCha
           <button
             type="button"
             className="small-btn"
-            title="Clear — use default PATH SDK"
+            title="Clear and use the default (PATH) SDK"
             onClick={() => { setValue(''); save(''); }}
           >✕</button>
         )}
@@ -86,7 +86,7 @@ function InlineSdkPath({ test, onSdkPathChange }: { test: TestCase; onSdkPathCha
       </div>
       {!saved && status !== 'saving' && (
         <small className="test-sdk-path-warn">
-          ⚠️ No SDK pinned — this test will run against the machine's default (PATH) SDK.
+          ⚠️ No SDK pinned. This test runs against the machine's default (PATH) SDK.
         </small>
       )}
     </div>
@@ -95,8 +95,8 @@ function InlineSdkPath({ test, onSdkPathChange }: { test: TestCase; onSdkPathCha
 
 const OTHER = '__other__';
 
-// Per-SDK version lists survive tab switches, so returning to Tests does not
-// re-run `dotnet workload search version`; ↻ bypasses it.
+// The version list for each SDK stays cached across tab switches, so going back
+// to Tests does not run `dotnet workload search version` again. ↻ reloads it.
 const versionCache = new Map<string, ReturnType<typeof fetchWorkloadVersions>>();
 
 /**
@@ -154,7 +154,7 @@ function InlineWorkloadVersion({ test, onChange, sdkVersion, sdkPath }: {
             id={`wl-version-${test.id}`}
             autoFocus
             value={text}
-            placeholder="e.g. 10.0.100.1"
+            placeholder="for example 10.0.100.1"
             onChange={e => setText(e.target.value)}
             onBlur={e => save(e.target.value)}
             onKeyDown={e => {
@@ -183,7 +183,7 @@ function InlineWorkloadVersion({ test, onChange, sdkVersion, sdkPath }: {
       </div>
       {listError && <small className="test-sdk-path-warn">⚠️ Could not list versions: {listError}</small>}
       {!saved && status !== 'saving' && (
-        <small className="test-sdk-path-warn">⚠️ No version selected — this test will fail until one is picked.</small>
+        <small className="test-sdk-path-warn">⚠️ No version selected. This test fails until you pick one.</small>
       )}
     </div>
   );
@@ -212,7 +212,7 @@ export default function TestList({ categories, selectedIds, onToggle, onSelectCa
                   />
                   <span className="test-title">{test.title}</span>
                   {test.is_machine_mutating && <span className="badge badge-warning">⚠️ Machine</span>}
-                  {test.is_continuous && <span className="badge badge-info" title="Runs as one continuous sequence: shares a working directory with the adjacent continuous tests, and is skipped if an earlier one fails">⛓ Continuous</span>}
+                  {test.is_continuous && <span className="badge badge-info" title="Runs as one continuous sequence. It shares a working directory with the adjacent continuous tests, and the app skips it if an earlier one fails.">⛓ Continuous</span>}
                   {test.workload_version && <span className="badge badge-info" title="Workload set version used by this test">🎯 {test.workload_version}</span>}
                 </label>
                 <div className="test-actions">

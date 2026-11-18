@@ -226,7 +226,7 @@ export default function RunDetail({ run, results, tests, onBack }: RunDetailProp
                   href={shot.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title={`${shot.name} — click to open full size`}
+                  title={`${shot.name}. Click to open full size.`}
                 >
                   <img src={shot.url} alt={shot.name} loading="lazy" />
                   <span className="screenshot-name">{shot.name}</span>

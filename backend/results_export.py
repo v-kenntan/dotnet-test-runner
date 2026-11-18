@@ -1,15 +1,15 @@
 """Export finished runs to a persistent results folder.
 
-Testers run this app on a throwaway VM per .NET build, so anything written next
-to the exe dies with the VM. Every finished run is therefore also written to a
-configurable destination that outlives the machine.
+Testers run this app on a throwaway VM for each .NET build. Anything written
+next to the exe is lost when the VM is deleted. So the app also writes every
+finished run to a configurable destination that outlives the VM.
 
-The destination is deliberately just *a path*: a synced OneDrive folder, a UNC
-share (\\\\server\\share\\results) or a mounted drive all work with no code
-difference. OneDrive is simply "a path that happens to sync", which is why this
-needs no Graph API, no token and no extra dependency.
+The destination is only a path. A synced OneDrive folder, a UNC share
+(\\\\server\\share\\results), or a mounted drive all work with the same code.
+To this module, OneDrive is a path that syncs. So it needs no Graph API, no
+token, and no extra dependency.
 
-Layout, which is collision-proof because many VMs write into one destination:
+Many VMs write into one destination, so the layout prevents name collisions:
 
     <root>/<sdk-version>/<machine>-<timestamp>-<run-id>/
         report.md
@@ -17,8 +17,8 @@ Layout, which is collision-proof because many VMs write into one destination:
         test_runner.db
         screenshots/*.png
 
-The folder name is derived from the run's *start* time, so re-exporting a run
-overwrites its own folder instead of piling up duplicates.
+The folder name comes from the run's start time. So exporting a run again
+overwrites its own folder and does not create duplicates.
 """
 
 import json
@@ -31,17 +31,17 @@ import sqlite3
 ENV_ROOT = "DTR_RESULTS_DIR"
 ENV_INCLUDE_DB = "DTR_EXPORT_DB"
 
-# Checked in order. OneDrive exports these itself when the sync client is set
-# up; the commercial (work/school) one wins because that is where test evidence
-# belongs.
+# Checked in order. OneDrive sets these variables when the sync client is set
+# up. The commercial (work or school) one wins because test evidence belongs
+# there.
 _ONEDRIVE_VARS = ("OneDriveCommercial", "OneDriveConsumer", "OneDrive")
 
 
 def resolve_results_root(fallback_dir):
     """Return (root, source) for the folder run exports are written under.
 
-    `source` names which rule won, so the UI can tell a tester whether results
-    are actually leaving the VM or just landing next to the exe again.
+    `source` names the rule that won, so the UI can tell a tester whether
+    results leave the VM or stay next to the exe.
     """
     configured = (os.environ.get(ENV_ROOT) or "").strip()
     if configured:
@@ -77,9 +77,9 @@ def _stamp(iso):
 
 
 # --- Markdown report -------------------------------------------------------
-# Ported from frontend/src/report.ts: auto-export happens in the backend with
-# no browser attached, so the report cannot be generated in the UI. Keep the
-# two in sync when either changes.
+# Ported from frontend/src/report.ts. Auto-export runs in the backend with no
+# browser attached, so the UI cannot generate the report. Keep the two in sync
+# when either changes.
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -182,7 +182,7 @@ def copy_db(db_path, dest):
     """Consistent copy of the SQLite DB.
 
     The live DB runs in WAL mode, so a plain file copy can miss committed pages
-    still sitting in the -wal file. The backup API takes care of that.
+    that are still in the -wal file. The backup API copies those pages too.
     """
     source = sqlite3.connect(db_path)
     try:
@@ -198,8 +198,8 @@ def copy_db(db_path, dest):
 def export_run(run_id, db_path, screenshots_dir, root=None):
     """Write a run's report, structured data, screenshots and DB copy.
 
-    Always returns a dict rather than raising: a failure to reach a network
-    share must never take down a finished test run.
+    Always returns a dict and never raises. A failure to reach a network share
+    must not break a finished test run.
     """
     try:
         root_dir, source = (root, "explicit") if root else resolve_results_root(
