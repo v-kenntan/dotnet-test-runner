@@ -137,7 +137,7 @@ export async function downloadMarkdown(content: string, filename: string) {
     const data = await res.json();
     if (data.saved || data.reason === 'cancelled') return;
   } catch {
-    // backend unavailable — fall through to the blob download
+    // The backend is not available, so use the browser download below.
   }
   const blob = new Blob([content], { type: 'text/markdown' });
   const url = URL.createObjectURL(blob);

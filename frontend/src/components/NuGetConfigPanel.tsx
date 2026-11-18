@@ -9,9 +9,9 @@ interface Props {
  * Inspect and repair the machine's user-level NuGet.Config (issue #64).
  *
  * Without the required package sources, `dotnet restore` fails with NU1102 and
- * the run reports a misleading test failure, so missing feeds are surfaced here
- * and can be added in one click. There is a single config file per machine but
- * the feeds a build needs depend on the SDK, so each feed shows what it is for.
+ * the run reports a misleading test failure. So this panel lists the missing
+ * feeds and adds them in one click. There is one config file per machine, but
+ * the feeds that a build needs depend on the SDK, so each feed shows its SDK.
  */
 export default function NuGetConfigPanel({ onClose }: Props) {
   const [state, setState] = useState<NuGetConfigState | null>(null);
@@ -27,7 +27,7 @@ export default function NuGetConfigPanel({ onClose }: Props) {
     try {
       const s = await fetchNuGetConfig();
       setState(s);
-      // Pre-tick exactly what needs fixing, so the common case is one click.
+      // Select only the feeds that need fixing, so the usual case takes one click.
       const next: Record<string, boolean> = {};
       for (const f of s.required) if (!f.present || f.disabled) next[f.key] = true;
       setSelected(next);
@@ -53,7 +53,7 @@ export default function NuGetConfigPanel({ onClose }: Props) {
       const bits: string[] = [];
       if (s.added?.length) bits.push(`added ${s.added.join(', ')}`);
       if (s.enabled?.length) bits.push(`re-enabled ${s.enabled.join(', ')}`);
-      setResult(bits.length ? `Saved — ${bits.join('; ')}.` : 'No changes were needed.');
+      setResult(bits.length ? `Saved: ${bits.join('; ')}.` : 'No changes were needed.');
       const next: Record<string, boolean> = {};
       for (const f of s.required) if (!f.present || f.disabled) next[f.key] = true;
       setSelected(next);
@@ -91,9 +91,9 @@ export default function NuGetConfigPanel({ onClose }: Props) {
 
         {state && !state.exists && (
           <p className="nuget-warn">
-            This file doesn't exist yet. NuGet only creates it after the SDK has been
-            used once — run <code>dotnet --info</code> (or just add a feed below, which
-            creates it).
+            This file doesn't exist yet. NuGet creates it the first time you use the
+            SDK. Run <code>dotnet --info</code>, or add a feed below, which also creates
+            the file.
           </p>
         )}
         {state?.error && <p className="modal-error">{state.error}</p>}
@@ -147,7 +147,7 @@ export default function NuGetConfigPanel({ onClose }: Props) {
         <h4>Add another feed</h4>
         <div className="nuget-custom">
           <input
-            placeholder="name, e.g. dotnet11"
+            placeholder="name, for example dotnet11"
             value={customKey}
             disabled={busy}
             onChange={e => setCustomKey(e.target.value)}
@@ -170,7 +170,7 @@ export default function NuGetConfigPanel({ onClose }: Props) {
             {busy ? '⏳ Saving…' : `Add ${pending} selected feed${pending === 1 ? '' : 's'}`}
           </button>
         </div>
-        <p className="nuget-hint">A backup is written to NuGet.Config.bak before any change.</p>
+        <p className="nuget-hint">Before each change, the app saves a backup to NuGet.Config.bak.</p>
       </div>
     </div>
   );

@@ -11,13 +11,13 @@ export interface TestCase {
   sdk_path?: string | null;
   /** Workload set version this test pins via the {workload_version} placeholder. */
   workload_version?: string | null;
-  /** Runs as part of a continuous chain: shared working dir, skipped after a failure. */
+  /** Runs as part of a continuous chain. The chain shares a working dir, and the app skips the rest after a failure. */
   is_continuous?: boolean;
-  /** Needs an SDK folder pinned to be meaningful, so the test list offers the picker inline. */
+  /** The test needs a pinned SDK folder, so the test list shows the picker inline. */
   requires_sdk_path?: boolean;
-  /** Needs a workload set version picked, so the test list offers a dropdown inline. */
+  /** The test needs a workload set version, so the test list shows a dropdown inline. */
   requires_workload_version?: boolean;
-  /** Tests tabs (besides "All") the test is listed under, e.g. ["cli", "sanity"]. */
+  /** Tests tabs (besides "All") the test is listed under, for example ["cli", "sanity"]. */
   suites?: string[];
 }
 
@@ -39,12 +39,12 @@ export interface TestRun {
   started_at: string;
   finished_at: string | null;
   status: string;
-  /** Omitted by the run list endpoint; only present on single-run fetches. */
+  /** The run list endpoint leaves this out. Only a single-run fetch returns it. */
   environment_info?: string;
   summary: string | null;
   sdk_version: string | null;
   sdk_path: string | null;
-  /** Native CPU architecture of the machine that ran it; null for older runs. */
+  /** Native CPU architecture of the machine that ran it. Null for older runs. */
   machine_arch?: string | null;
 }
 
@@ -161,13 +161,13 @@ export interface RunScreenshot {
 export interface ResultsDestination {
   root: string;
   source: string;
-  /** False when results only land on this machine and die with the VM. */
+  /** False when results stay only on this machine, so deleting the VM deletes them. */
   persistent: boolean;
   env_var: string;
-  /** Where the live database (and the run history in it) is kept. */
+  /** Where the app keeps the live database, which holds the run history. */
   db_path: string;
   db_source: string;
-  /** False when the history dies with the VM — or with the next rebuild. */
+  /** False when deleting the VM, or the next rebuild, deletes the history. */
   db_persistent: boolean;
   db_env_var: string;
 }
@@ -183,7 +183,7 @@ export interface UpdateStatus {
   available: string | null;
   /** The last update was rolled back to the old files. */
   failed: boolean;
-  /** Set when GitHub could not be asked. */
+  /** Set when the app could not reach GitHub. */
   error: string | null;
 }
 
@@ -228,7 +228,7 @@ export async function fetchEnvironment(): Promise<{ output: string; exit_code: n
 export interface SdkEntry {
   version: string;
   path: string;
-  /** Settings-style name, e.g. "11.0.100-preview.7.26381.103 (x64)". */
+  /** Settings-style name, for example "11.0.100-preview.7.26381.103 (x64)". */
   label?: string;
 }
 
@@ -260,7 +260,7 @@ export interface NuGetFeed {
   key: string;
   url: string;
   protocol_version?: string;
-  /** Which SDK this feed is for — one config file is shared across SDKs. */
+  /** Which SDK this feed is for. All SDKs share one config file. */
   sdk?: string;
   present?: boolean;
   disabled?: boolean;

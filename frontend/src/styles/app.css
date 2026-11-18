@@ -206,14 +206,14 @@ body {
   gap: 0.5rem;
   margin-bottom: 1rem;
   position: sticky;
-  /* Park below the pinned header, whose height varies with the SDK banner. */
+  /* Stick below the pinned header, whose height changes with the SDK banner. */
   top: var(--header-h, 0px);
   z-index: 10;
   background: var(--bg);
   padding: 0.75rem 0;
 }
 
-/* All / CLI / Sanity Check tabs: their own row above the search and buttons. */
+/* The All, CLI and Sanity Check tabs are on their own row above the search and buttons. */
 .toolbar {
   flex-wrap: wrap;
 }
@@ -324,7 +324,7 @@ body {
   margin: -0.5rem 0 0.75rem;
 }
 
-/* Test List */
+/* Test list */
 .test-list {
   display: flex;
   flex-direction: column;
@@ -555,7 +555,7 @@ body {
   color: var(--text-muted);
 }
 
-/* Log Viewer */
+/* Log viewer */
 .log-viewer {
   background: #0d1117;
   border: 1px solid var(--surface-2);
@@ -594,7 +594,7 @@ body {
   margin-top: 0.4em;
 }
 
-/* Results Summary */
+/* Results summary */
 .results-summary {
   margin-top: 1rem;
 }
@@ -624,7 +624,7 @@ body {
   opacity: 0.85;
 }
 
-/* Where run exports land. Warn styling when they never leave this machine. */
+/* Where run exports go. Warning style when they never leave this machine. */
 .results-destination {
   display: flex;
   align-items: flex-start;
@@ -924,7 +924,7 @@ body {
   background: var(--surface-2);
 }
 
-/* Dashboard view — reuses history table styles */
+/* Dashboard view. Uses the history table styles. */
 .dashboard-view table {
   width: 100%;
   border-collapse: collapse;
@@ -976,7 +976,7 @@ body {
   padding: 2rem;
 }
 
-/* History filters + pagination */
+/* History filters and pagination */
 .history-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1014,7 +1014,7 @@ body {
   letter-spacing: normal;
 }
 
-/* Dark UA-rendered date picker icon, otherwise invisible on the dark surface. */
+/* The browser draws the date picker icon dark, so it is invisible on the dark background without this. */
 .history-filters input[type='date']::-webkit-calendar-picker-indicator {
   filter: invert(1);
   cursor: pointer;
@@ -1112,7 +1112,7 @@ body {
   text-align: right;
 }
 
-/* Run Detail view */
+/* Run detail view */
 .run-detail-view {
   padding: 1rem 0;
 }
@@ -1206,7 +1206,7 @@ body {
   background: var(--surface-2);
 }
 
-/* Run Detail Tabs */
+/* Run detail tabs */
 .run-detail-tabs {
   display: flex;
   gap: 0;
@@ -1277,7 +1277,7 @@ body {
   word-break: break-all;
 }
 
-/* Run Detail Logs */
+/* Run detail logs */
 .run-detail-logs-container {
   display: flex;
   gap: 0;
@@ -1454,8 +1454,8 @@ body {
   cursor: not-allowed;
 }
 
-/* NuGet.Config panel (issue #64) — inspect and repair the machine's package
-   sources so restores don't fail with NU1102 mid-run. */
+/* NuGet.Config panel (issue #64). It lists and fixes the machine's package
+   sources so restores don't fail with NU1102 during a run. */
 .nuget-modal {
   max-width: 720px;
   max-height: 85vh;

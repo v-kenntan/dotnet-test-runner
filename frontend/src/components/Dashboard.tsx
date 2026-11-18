@@ -12,8 +12,8 @@ interface DashboardProps {
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
-/** `started_at` is a local ISO timestamp, so its date part compares directly
- * against the `YYYY-MM-DD` value of an `<input type="date">`. */
+/** `started_at` is a local ISO timestamp, so its date part compares as a string
+ * with the `YYYY-MM-DD` value of an `<input type="date">`. */
 function datePart(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '';
 }
@@ -86,7 +86,8 @@ export default function Dashboard({ runs, onViewRun, onRetryRun, isRunning }: Da
   );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  // Clamp rather than reset: filtering down mid-browse must not land on a blank page.
+  // Clamp the page instead of resetting it. When a filter shortens the list,
+  // a user on a later page must not see a blank page.
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * pageSize;
   const visible = filtered.slice(start, start + pageSize);
