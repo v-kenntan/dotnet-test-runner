@@ -1,64 +1,64 @@
 # .NET SDK Test Runner
 
-A standalone application for automating .NET SDK test execution on Windows VMs. Ships as a single portable folder, no Python or Node.js required on the target machine.
+This app runs .NET SDK tests on Windows VMs. It ships as one portable folder. The target machine does not need Python or Node.js.
 
-## Quick Start (End Users)
+## Quick start (end users)
 
-**Requirements:** Windows 10/11 (x64) + .NET SDK installed
+You need Windows 10 or 11 (x64) with a .NET SDK installed.
 
-1. Copy the `dotnet-test-runner` folder to your VM
-2. Run `dotnet-test-runner.exe`
-3. Opens in a dedicated app window (a chromeless Microsoft Edge window — no tabs, no address bar). Falls back to your default browser at http://localhost:5000 if no Edge/Chrome is installed.
+1. Copy the `dotnet-test-runner` folder to your VM.
+2. Run `dotnet-test-runner.exe`.
+3. The app opens in a Microsoft Edge app window, which has no tabs and no address bar. If Edge and Chrome are not installed, the app opens in your default browser at http://localhost:5000.
 
-To force browser/web mode, set the environment variable `APP_MODE=web` before launching. `APP_MODE=native` (the default) uses the app window.
+To use the browser instead of the app window, set the environment variable `APP_MODE=web` before you start the app. The default, `APP_MODE=native`, uses the app window.
 
 ### Updating
 
-At launch the app checks the latest GitHub release. If it differs from your version, a banner offers **Update**. Click **Check for updates** in the header to check again at any time. The app downloads the new release, replaces its own files, and restarts. Your run history (`test_runner.db`) and SDK zip cache are kept. Update is disabled while a run is active. If the file swap fails, the old files are restored and the app shows "The last update failed" when it restarts.
+When the app starts, it checks the latest GitHub release. If that release has a different version from yours, a banner shows an **Update** button. To check again at any time, click **Check for updates** in the header. The update downloads the new release, replaces the app files and restarts the app. It keeps your run history (`test_runner.db`) and the SDK zip cache. You cannot update while a run is active. If the file swap fails, the app puts the old files back and shows "The last update failed" after it restarts.
 
-While the repository is private, the check needs a token: set `GITHUB_TOKEN` (with read access to the repo) before launching. Without it, no banner shows. Versions v1.06 and older have no updater, so download one release by hand to get it.
+While the repository is private, the check needs a token. Before you start the app, set `GITHUB_TOKEN` to a token with read access to the repo. Without a token, the banner does not show. Versions v1.06 and older have no updater, so download one release by hand to get it.
 
-## Selecting a specific SDK install (e.g. zip vs. exe)
+## Selecting a specific SDK install, such as a zip or an exe
 
-By default, all `dotnet` commands run against the SDK on the machine's `PATH` (typically the `.exe`/installer SDK under `C:\Program Files\dotnet`). The **SDK dropdown** at the top of the app lists the installs `dotnet --list-sdks` reports, named the way Windows **Settings → Installed apps** names them — architecture and install source included:
+By default, all `dotnet` commands use the SDK on the machine's `PATH`. This is usually the SDK from the `.exe` installer, under `C:\Program Files\dotnet`. The **SDK dropdown** at the top of the app lists the installs that `dotnet --list-sdks` reports. It names each install the same way as the Installed apps page in Windows Settings, with the architecture and the install source:
 
 ```
 11.0.100-preview.7.26366.102 (x64)
 10.0.400-preview.0.25322.101 (x64) from Visual Studio
 ```
 
-(The extra detail comes from the Windows installed-apps registry; if an SDK has no registry entry, its plain version number is shown.)
+The extra detail comes from the Windows installed-apps registry. If an SDK has no registry entry, the dropdown shows only its version number.
 
 ### Pinning a zip SDK or any other folder
 
-To exercise an SDK that isn't installed — for example a `.zip` SDK, which uses the file-based workload install type — pick **📦 Enter .zip or folder path…** in the SDK dropdown and paste either:
+You can test an SDK that is not installed. For example, a `.zip` SDK uses the file-based workload install type, so you test it this way. Pick **Enter .zip or folder path…** in the SDK dropdown and paste one of these paths:
 
-- a path to an SDK **`.zip`** (e.g. `C:\Downloads\dotnet-sdk-11.0.100-win-x64.zip`), or
-- a path to an already-extracted **SDK folder** — the one containing `dotnet.exe`.
+- the path to an SDK `.zip`, for example `C:\Downloads\dotnet-sdk-11.0.100-win-x64.zip`
+- the path to an SDK folder that is already extracted. This is the folder that contains `dotnet.exe`.
 
-A zip is extracted once into `sdk_zips/` next to the app's database and reused on every later run, so you only pay the extraction cost the first time. Rebuilding the zip at the same path produces a fresh extraction. The app validates the path immediately and shows the resolved version, so you find out before starting a run.
+The app extracts a zip one time into `sdk_zips/` next to the exe, and uses that copy on every later run. Only the first run waits for the extraction. If you rebuild the zip at the same path, the app extracts it again. The app checks the path at once and shows the SDK version, so you find problems before you start a run.
 
-The whole run then executes against that install (`DOTNET_ROOT` is set, the folder is prepended to `PATH`, and multi-level lookup is disabled), so `dotnet --info` reports it as the **Base Path**.
+The whole run then uses that install. The app sets `DOTNET_ROOT`, puts the folder first on `PATH` and turns off multi-level lookup. So `dotnet --info` shows that folder as the **Base Path**.
 
 ### Pinning an SDK on a single test
 
-An individual test can override the run's SDK. Open it in the editor and set the **SDK folder (optional)** field, or set an `sdk_path` key in a YAML test definition. This field accepts a **`.zip` or a folder**, exactly like the dropdown, and uses the same extraction cache. Leave it blank to use the run's SDK.
+One test can use a different SDK from the rest of the run. Open the test in the editor and set the **SDK folder (optional)** field, or set an `sdk_path` key in a YAML test definition. This field accepts a `.zip` or a folder, the same as the dropdown, and uses the same extraction cache. Leave it blank to use the run's SDK.
 
-Tests that are only meaningful against a pinned install — the **zip install** workload cases — carry `requires_sdk_path: true` in their YAML and show the same **SDK folder** box inline in the test list, so the folder can be picked without opening the editor. Both boxes write the same `sdk_path` field, so whichever one you use, the other shows the new value. A pinned folder survives restarts: `sdk_path` is per machine, so the built-in re-seed on startup deliberately leaves it (and `workload_version`) alone.
+Some tests are useful only with a pinned install, for example the zip install workload cases. These tests have `requires_sdk_path: true` in their YAML. The test list shows the same **SDK folder** box under them, so you can pick the folder without the editor. Both boxes write the same `sdk_path` field, so a change in one box shows in the other. A pinned folder stays after a restart. `sdk_path` is different on each machine, so the built-in re-seed at startup does not change it or `workload_version`.
 
-Precedence per test:
+The app picks the SDK for each test in this order:
 
-1. A valid per-test `sdk_path` → that install.
-2. Otherwise the SDK pinned for the run.
-3. Otherwise the machine's `PATH` SDK.
+1. A valid `sdk_path` on the test.
+2. The SDK pinned for the run.
+3. The SDK on the machine's `PATH`.
 
-If a pinned path is invalid (not found, or no `dotnet.exe` in it or one level below), the run logs a warning and falls back to the `PATH` SDK. This lets, say, the "zip install" workload tests target a zip SDK while the rest of the run uses the default.
+If a pinned path is not valid, the run logs a warning and uses the `PATH` SDK. A path is not valid if it does not exist, or if it has no `dotnet.exe` in the folder or one level below. With this order, the "zip install" workload tests can use a zip SDK while the rest of the run uses the default SDK.
 
 ## Screenshots (evidence capture)
 
-A test can capture a screenshot as evidence using a `screenshot` step (Windows only). It opens a window, captures just that window, and saves a PNG. Two targets are supported.
+A test can use a `screenshot` step to save a screenshot as evidence. This works on Windows only. The step opens a window, captures only that window and saves a PNG. It can open one of two targets.
 
-**A folder in File Explorer:**
+A folder in File Explorer:
 
 ```yaml
 - type: screenshot
@@ -72,7 +72,7 @@ A test can capture a screenshot as evidence using a `screenshot` step (Windows o
   # folder: 'C:\Program Files\dotnet\metadata\workloads'
 ```
 
-**A Windows Settings page**, optionally filtered by typing into the page's own search box:
+A Windows Settings page. The step can also type text into the search box of the page to filter it:
 
 ```yaml
 - type: screenshot
@@ -82,28 +82,32 @@ A test can capture a screenshot as evidence using a `screenshot` step (Windows o
   delay: 6
 ```
 
-The Settings window is located by UI Automation rather than by its title, so it is found regardless of the Windows display language, and it is closed afterwards only if the step opened it.
+The step finds the Settings window with UI Automation, not by its title. So it works in any Windows display language. The step closes the Settings window afterwards only if the step opened it.
 
-Screenshots are saved under `screenshots/<run_id>/` next to the app's database and can be browsed in the **Screenshots** tab of a run's detail view. **Test 1** captures the installed .NET apps in Settings and the `sdk` folders in Explorer, as two extra checkpoints beyond `dotnet --info` (per issue #55) — the Explorer one follows `DOTNET_ROOT`, so it shows the SDK folders of whichever install the run pinned. **Workload Scenario 1** captures the `installertype` folder (per issue #47), and **Workload Scenario 2** captures the `Microsoft.NET.Runtime.MonoAOTCompiler.Task\<version>\Sdk` pack folder before and after it is emptied.
+The app saves screenshots under `screenshots/<run_id>/` next to its database. You can see them in the **Screenshots** tab of the run detail view.
+
+- **Test 1** captures the installed .NET apps in Settings and the `sdk` folders in Explorer (issue #55). These are two more checkpoints in addition to `dotnet --info`. The Explorer screenshot follows `DOTNET_ROOT`, so it shows the SDK folders of the install that the run pinned.
+- **Workload Scenario 1** captures the `installertype` folder (issue #47).
+- **Workload Scenario 2** captures the `Microsoft.NET.Runtime.MonoAOTCompiler.Task\<version>\Sdk` pack folder before and after the test empties it.
 
 ## NuGet feeds
 
-Restores fail with `NU1102` when the required package sources are missing, which surfaces as a *failed test* rather than as a configuration problem. The **📦 NuGet.Config** button in the SDK banner opens the user-level config (`%APPDATA%\NuGet\NuGet.Config`) directly in Notepad, so a complete feed configuration can be pasted in (issue #76); if NuGet hasn't created the file yet, an empty one is created first.
+If a required package source is missing, restore fails with `NU1102`. This shows as a failed test, not as a configuration problem. The **NuGet.Config** button in the SDK banner opens the user-level config (`%APPDATA%\NuGet\NuGet.Config`) in Notepad, so you can paste in a full feed configuration (issue #76). If NuGet has not made the file yet, the app makes an empty one first.
 
-The **Feeds…** button next to it opens a panel that:
+The **Feeds…** button next to it opens a panel. The panel does these things:
 
-- shows the user-level config path (`%APPDATA%\NuGet\NuGet.Config`) and the sources already in it,
-- flags each required feed as present or missing — including a feed that is configured but sitting in `<disabledPackageSources>`, which restore silently ignores,
-- adds the missing ones in one click, and
-- lets you add any other feed by name and URL.
+- It shows the path of the user-level config and the sources in it.
+- It marks each required feed as present or missing. A feed in `<disabledPackageSources>` counts as missing, because restore ignores it.
+- It adds the missing feeds with one click.
+- It lets you add any other feed by name and URL.
 
-There is only one config file per machine but the feeds a build needs depend on the SDK, so each required feed is labelled with the SDK it is for. NuGet only creates the file once an SDK has been used (e.g. `dotnet --info`); if it is missing, the app says so and creates it when you add a feed. `NuGet.Config.bak` is written before any change.
+Each machine has only one config file, but the feeds a build needs depend on the SDK. So the panel labels each required feed with its SDK. NuGet makes the file only after an SDK runs once, for example `dotnet --info`. If the file is missing, the app tells you, and makes the file when you add a feed. Before any change, the app writes a copy to `NuGet.Config.bak`.
 
-## Saving results so they outlive the VM
+## Saving results so they stay after the VM is gone
 
-Testers typically run this on a throwaway VM per .NET build, where anything written next to the exe is lost when the VM goes away. Every finished run is therefore **also exported to a persistent destination**, and any past run can be re-exported from its detail view with **💾 Save to results folder**.
+Testers usually run this app on a new VM for each .NET build. When the VM is deleted, all files next to the exe are lost. So the app also exports every finished run to a persistent destination. To export a past run again, open its detail view and click **Save to results folder**.
 
-The destination is just *a path*, so a synced OneDrive folder, a UNC share (`\\server\share\results`) or a mounted drive all work with no configuration difference — OneDrive is simply "a path that happens to sync". Set it with the `DTR_RESULTS_DIR` environment variable:
+The destination is only a path. A synced OneDrive folder, a UNC share (`\\server\share\results`) and a mounted drive all work with the same setup. To set it, use the `DTR_RESULTS_DIR` environment variable:
 
 ```bat
 set DTR_RESULTS_DIR=\\server\share\dotnet-test-results
@@ -111,143 +115,143 @@ set DTR_RESULTS_DIR=\\server\share\dotnet-test-results
 set DTR_RESULTS_DIR=%OneDriveCommercial%\dotnet-test-runner
 ```
 
-Resolution order:
+The app picks the destination in this order:
 
 | Order | Source | Result |
 |-------|--------|--------|
-| 1 | `DTR_RESULTS_DIR` | Used as-is (expands `%VARS%` and `~`) |
-| 2 | `%OneDriveCommercial%`, `%OneDriveConsumer%`, `%OneDrive%` | `<OneDrive>\dotnet-test-runner` — first one that exists wins |
-| 3 | *(nothing configured)* | `results/` next to the database, **which dies with the VM** |
+| 1 | `DTR_RESULTS_DIR` | Used as it is. The app expands `%VARS%` and `~`. |
+| 2 | `%OneDriveCommercial%`, `%OneDriveConsumer%`, `%OneDrive%` | `<OneDrive>\dotnet-test-runner`, from the first variable that exists |
+| 3 | Nothing set | `results/` next to the database. These files are lost when the VM is deleted. |
 
-Falling back to (3) is called out in the UI and in the run log, so a tester is warned *before* tearing the VM down rather than after.
+If the app uses option 3, the UI and the run log show a warning. So the tester sees it before deleting the VM.
 
-Each run is written to a collision-proof folder, so many VMs can share one destination:
+The app writes each run to its own folder, so many VMs can share one destination:
 
 ```
 <root>/<sdk-version>/<machine>-<timestamp>-<run-id>/
     report.md          # the same Markdown report as the export button
-    run.json           # run, results and every step — mergeable across VMs
+    run.json           # the run, its results and every step, which you can merge across VMs
     test_runner.db     # consistent copy of the whole database
     screenshots/*.png
 ```
 
-The folder name uses the run's *start* time, so re-exporting a run overwrites its own folder instead of creating duplicates. Set `DTR_EXPORT_DB=0` to skip the database copy.
+The folder name uses the start time of the run. So when you export a run again, the app writes over its old folder and does not make a copy. To skip the database copy, set `DTR_EXPORT_DB=0`.
 
 ### The live database goes there too
 
-The exports above are a *record*; the app's own run history lives in `test_runner.db`. That file used to sit next to the exe, so **rebuilding the app wiped the history**, and re-imaging the VM lost it entirely. It is now kept under the same persistent root:
+The exports above are a record. The app keeps its own run history in `test_runner.db`. That file was next to the exe before, so each rebuild of the app deleted the history, and a re-imaged VM lost it. The app now keeps the database under the same persistent root:
 
 ```
 <root>/history/test_runner.db
 <root>/history/screenshots/<run_id>/*.png
 ```
 
-so history and screenshots carry across rebuilds *and* across VMs. The Dashboard shows exactly where it is, next to the results destination.
+So the history and the screenshots stay across rebuilds and across VMs. The Dashboard shows where the database is, next to the results destination.
 
-Resolution order:
+The app picks the database path in this order:
 
 | Order | Source | Result |
 |-------|--------|--------|
-| 1 | `DTR_DB_PATH` | Used as-is — a full path to the `.db` file |
+| 1 | `DTR_DB_PATH` | Used as it is. It is the full path to the `.db` file. |
 | 2 | The results root above, when it is persistent | `<root>\history\test_runner.db` |
-| 3 | *(nothing configured)* | Next to the exe, **where the next rebuild wipes it** |
+| 3 | Nothing set | Next to the exe. The next rebuild deletes it. |
 
-The first time the database moves, any existing history and screenshots are copied across automatically. If the destination cannot be written — an offline share, a read-only folder — the app logs a warning and keeps using the local file rather than refusing to start.
+The first time the database moves, the app copies the old history and screenshots to the new place. If the app cannot write to the destination, for example an offline share or a read-only folder, it logs a warning and uses the local file. It does not stop.
 
-Extracted zip SDKs (`sdk_zips/`) deliberately stay next to the exe: they are hundreds of megabytes and have no business being synced.
+The extracted zip SDKs in `sdk_zips/` stay next to the exe. They are hundreds of megabytes, so the app does not sync them.
 
-> **One machine at a time.** A single shared database keeps the history combined across the VM-per-build workflow, but two machines writing the same OneDrive folder simultaneously is not supported — OneDrive would produce conflict copies. Give each concurrent machine its own `DTR_DB_PATH` if you ever need that.
+> **One machine at a time.** One shared database keeps the history of all VMs in one place. But two machines must not write to the same OneDrive folder at the same time, because OneDrive then makes conflict copies. If you need to run more than one machine at the same time, give each machine its own `DTR_DB_PATH`.
 
-> **If you use OneDrive sync:** the files are only written *locally* and uploaded in the background. Confirm OneDrive has finished syncing before destroying the VM. A network share has no such delay — the write either lands or reports an error immediately.
+> **If you use OneDrive sync.** The app writes the files on the local disk, and OneDrive uploads them in the background. Make sure OneDrive has finished the sync before you delete the VM. A network share has no such delay. The write works or shows an error at once.
 
 ## Workload scenarios
 
-The **Workloads** category mirrors the "Test cases for Workloads" plan:
+The **Workloads** category follows the "Test cases for Workloads" plan:
 
-- **Scenario 1** — inspect `dotnet workload info` / `list` / `search` and verify the MSI `installertype` marker is a 0 KB file.
-- **Scenario 2** — install `wasm-tools` and `android` with `--skip-manifest-update`, publish a Blazor WASM app twice (`-o 1p0` without AOT, then `-o 2p0` with `<RunAOTCompilation>true</RunAOTCompilation>`) and assert the AOT output is larger, then delete the contents of the `MonoAOTCompiler.Task` `Sdk` pack folder, restore it with `dotnet workload repair`, and uninstall both workloads.
-- **Scenario 3** — set the `VerifySignatures` workload policy (`HKLM\SOFTWARE\Policies\Microsoft\dotnet\Workloads`) and assert `dotnet workload install wasm-tools --skip-sign-check` is rejected (issue #79); then install the same two workloads **without** `--skip-manifest-update` so the manifests are updated, then uninstall the .NET SDK and assert `dotnet` is no longer available. The policy is left set: it only stops `--skip-sign-check` from opting out of signature verification.
+- **Scenario 1** runs `dotnet workload info`, `list` and `search`. It checks that the MSI `installertype` marker is a 0 KB file.
+- **Scenario 2** installs `wasm-tools` and `android` with `--skip-manifest-update`. It publishes a Blazor WASM app two times, first `-o 1p0` without AOT, then `-o 2p0` with `<RunAOTCompilation>true</RunAOTCompilation>`, and checks that the AOT output is larger. Then it deletes the contents of the `Sdk` pack folder of `MonoAOTCompiler.Task`, restores it with `dotnet workload repair`, and uninstalls both workloads.
+- **Scenario 3** sets the `VerifySignatures` workload policy (`HKLM\SOFTWARE\Policies\Microsoft\dotnet\Workloads`). It checks that `dotnet workload install wasm-tools --skip-sign-check` fails (issue #79). Then it installs the same two workloads without `--skip-manifest-update`, so the manifests update. Then it uninstalls the .NET SDK and checks that `dotnet` no longer runs. The policy stays set. It only stops `--skip-sign-check` from turning off signature checks.
 
-> **Scenario 3 removes the .NET SDK from the machine.** It is ordered last so that a "run everything" pass does not break the tests behind it, and every later test would fail until the SDK is reinstalled. Run it on a VM you can re-image.
+> **Scenario 3 removes the .NET SDK from the machine.** It runs last, so a "run everything" pass does not break the tests after it. Every later test fails until you install the SDK again. Run it on a VM that you can re-image.
 
-Scenarios 2 and 3 install MSI workloads and (for Scenario 3) set a machine policy and run the SDK uninstall bundle, so the runner should be started elevated. Scenario 2 also deletes files under `C:\Program Files\dotnet`; if the runner is not elevated, that step and Scenario 3's policy step request administrator permission with a UAC prompt you have to approve for the run to continue.
+Scenarios 2 and 3 install MSI workloads. Scenario 3 also sets a machine policy and runs the SDK uninstall bundle. So start the runner as administrator. Scenario 2 also deletes files under `C:\Program Files\dotnet`. If the runner is not elevated, that step and the policy step of Scenario 3 show a UAC prompt. You must approve it, or the run cannot continue.
 
 ## HTTPS development certificate
 
-Test cases **4a–4c** (C# web/mvc/webapi) and **9a–9c** (F# web/mvc/webapi) host HTTPS sites, which requires a trusted ASP.NET Core development certificate. If it is missing, Windows pops a security dialog *while the run is in progress* and the run stalls until someone clicks it.
+Test cases **4a–4c** (C# web, mvc and webapi) and **9a–9c** (F# web, mvc and webapi) host HTTPS sites. These sites need a trusted ASP.NET Core development certificate. If the certificate is missing, Windows shows a security dialog during the run, and the run stops until someone clicks it.
 
-To avoid that, the runner checks the certificate **before** starting a run that contains those tests (`dotnet dev-certs https --check --trust`). If it isn't trusted, a prompt appears with three choices:
+So before a run with these tests, the runner checks the certificate with `dotnet dev-certs https --check --trust`. If the certificate is not trusted, a prompt shows three choices:
 
-- **Trust certificate** — runs `dotnet dev-certs https --trust` up front; accept the Windows security dialog, and the run starts right after
-- **Run anyway** — starts the run without trusting (the dialog may then interrupt it midway)
-- **Cancel run** — nothing is executed
+- **Trust certificate** runs `dotnet dev-certs https --trust` first. Accept the Windows security dialog, and the run starts after it.
+- **Run anyway** starts the run without the trust step. The dialog can then stop the run in the middle.
+- **Cancel run** runs nothing.
 
-Runs without HTTPS tests skip the check entirely.
+A run without HTTPS tests skips this check.
 
 ## Workload sets: selecting the version
 
-Most Workload Set cases act on a **specific workload set version** (`dotnet workload update --version <version>`, `dotnet workload install android --version <version>`, or a `workloadVersion` pinned in `global.json`). Those versions only exist on the workloads feed, so the runner cannot derive one — you pick it:
+Most Workload Set cases use a specific workload set version. They run `dotnet workload update --version <version>` or `dotnet workload install android --version <version>`, or they pin a `workloadVersion` in `global.json`. These versions exist only on the workloads feed, so the runner cannot find one for you. You pick it:
 
-1. Run **Update to latest workload set**, or any test containing `dotnet workload search version`, and note a version from the output.
-2. Open the test you want in the editor and fill in **Workload set version** (e.g. `8.0.400`).
-3. Run it. Every `{workload_version}` in that test's steps expands to what you entered.
+1. Run **Update to latest workload set**, or any test with `dotnet workload search version`, and note a version from the output.
+2. Open the test in the editor and fill in **Workload set version**, for example `8.0.400`.
+3. Run the test. Each `{workload_version}` in the steps of that test changes to the value you entered.
 
-**Install workload with specific version** skips steps 1–2: it carries `requires_workload_version: true` in its YAML, so the test list shows a **Workload set version** dropdown under it. The dropdown is filled from `dotnet workload search version` for the SDK selected in the header (or the test's own SDK folder); ↻ reloads it, and **Other…** takes a version it doesn't list. It writes the same field as the editor.
+**Install workload with specific version** does not need steps 1 and 2. Its YAML has `requires_workload_version: true`, so the test list shows a **Workload set version** dropdown under it. The app fills the dropdown from `dotnet workload search version`, for the SDK selected in the header or the SDK folder of the test. The ↻ button loads the list again. **Other…** lets you type a version that is not in the list. The dropdown writes the same field as the editor.
 
-The field is per test, so **Update workload sets from different band** can hold a version from another feature band (`8.0.3xx` on an `8.0.4xx` SDK, `9.0.2xx` on `9.0.3xx`, `10.0.1xx` on `10.0.2xx`) while the others hold the current band's.
+Each test has its own field. So **Update workload sets from different band** can have a version from another feature band, while the other tests have a version from the current band. For example, `8.0.3xx` on an `8.0.4xx` SDK, `9.0.2xx` on `9.0.3xx`, or `10.0.1xx` on `10.0.2xx`.
 
-If a step uses `{workload_version}` and the field is blank, the test fails immediately with a message saying so, rather than running `--version` with an empty value. Versions you enter are kept when the app restarts — the YAML re-seed does not overwrite them.
+If a step uses `{workload_version}` and the field is blank, the test fails at once with a message about it. It does not run `--version` with an empty value. The app keeps the versions you enter after a restart, because the YAML re-seed does not change them.
 
 ## Continuous test cases
 
-Tests marked `continuous: true` in YAML (all **Workload Sets** cases) are executed as one sequence instead of in isolation:
+The app runs tests with `continuous: true` in their YAML as one sequence, not one by one. All **Workload Sets** cases are continuous.
 
-- **Shared working directory** — consecutive continuous tests reuse one temp folder, so files from an earlier test (e.g. the `global.json` written by the pin test) are still there for a later one. Each test still starts at the folder's root, so a `cd` inside one test never moves the next.
-- **Stops on failure** — if one fails, the remaining tests in the sequence are reported **Skipped** rather than run against a half-updated machine. The shared folder is kept for debugging, and its path is logged.
+- **Shared working directory.** Continuous tests that come one after another use one temp folder. So a later test can use files from an earlier test, for example the `global.json` that the pin test writes. Each test still starts at the root of the folder, so a `cd` in one test does not change the next test.
+- **Stops on failure.** If one test fails, the app marks the other tests in the sequence **Skipped** and does not run them on a half-updated machine. The app keeps the shared folder for debugging and logs its path.
 
-A non-continuous test ends the sequence; the next continuous test starts a fresh one. Continuous tests show a ⛓ badge in the test list.
+A test that is not continuous ends the sequence. The next continuous test starts a new one. The test list shows a ⛓ badge on continuous tests.
 
 ## Usage
 
-1. **Select tests** from the left panel (grouped by category). The **All** / **CLI** / **Sanity Check** tabs above it narrow the list to a suite: **Sanity Check** is the quick pass to run first on a new SDK, and **CLI** is the full set, minus the sanity-only WinForms/WPF publish and F# solution cases
-2. **Click "Run Selected"** to execute
-3. **Watch real-time logs** in the runner view (click a test name to scroll to its output)
-4. **Review results** with pass/fail/skip counts
-5. **Add custom tests** using the "+ Add Test" button
+1. **Select tests** in the left panel. The panel groups tests by category. The **All**, **CLI** and **Sanity Check** tabs above it show only one suite. **Sanity Check** is the quick pass to run first on a new SDK. **CLI** is the full set, without the sanity-only WinForms/WPF publish and F# solution cases.
+2. Click **Run Selected** to start the run.
+3. Watch the live logs in the runner view. Click a test name to go to its output.
+4. Look at the results, with the counts of passed, failed and skipped tests.
+5. To add your own test, click **+ Add Test**.
 
-### Test Outcomes
+### Test outcomes
 
 Each test reports one of these outcomes:
 
-- **Passed** ✓ — all steps succeeded with no warnings
-- **Passed with warnings** ⚠ — all steps succeeded but the output contained an MSBuild/NuGet-style warning (e.g. `warning NU1903:` for a package with a known vulnerability). Counted separately from clean passes.
-- **Failed** ✗ — a step returned an unexpected exit code or failed an output assertion
-- **Skipped** — the test was cancelled before it ran, or an earlier test in its continuous sequence failed
+- **Passed** means that all steps succeeded with no warnings.
+- **Passed with warnings** means that all steps succeeded, but the output had an MSBuild or NuGet warning. An example is `warning NU1903:` for a package with a known vulnerability. The app counts these apart from clean passes.
+- **Failed** means that a step returned an unexpected exit code or failed an output check.
+- **Skipped** means that you cancelled the test before it ran, or an earlier test in its continuous sequence failed.
 
-### Completion Notification
+### Completion notification
 
-When a run finishes, a Windows message box pops up in the foreground with the pass/fail/warning/skip counts. It is shown topmost on purpose: a test's Notepad or browser window often ends up covering the app, which made it hard to tell whether the run had finished. Windows normally refuses to give focus to a background process, so the app also forces the box to the front (briefly clearing the foreground lock timeout and attaching to the active window's input queue); if Windows still refuses, the taskbar button blinks until the box is opened. The app window's title also changes to `✅ Run complete` / `❌ Run complete` / `⛔ Run cancelled` while the result is on screen.
+When a run finishes, a Windows message box shows the counts of passed, failed, warning and skipped tests. The box stays on top of other windows. A Notepad or browser window from a test often covers the app, so it was hard to see if the run had finished. Windows does not usually let a background process take focus. So the app forces the box to the front. It clears the foreground lock timeout for a short time and attaches to the input queue of the active window. If Windows still refuses, the taskbar button flashes until you open the box. While the result shows, the title of the app window changes to `✅ Run complete`, `❌ Run complete` or `⛔ Run cancelled`.
 
-## Building from Source
+## Building from source
 
 ### Prerequisites (build machine only)
 
-- **Python 3.12** — [python.org](https://python.org)
-- **Node.js 18+** — [nodejs.org](https://nodejs.org) (only if modifying the frontend)
+- **Python 3.12** from [python.org](https://python.org)
+- **Node.js 18+** from [nodejs.org](https://nodejs.org), only if you change the frontend
 
-### Build Steps
+### Build steps
 
 ```
 build.bat
 ```
 
-Output: `dist/dotnet-test-runner/` folder containing the standalone executable.
+The output is the `dist/dotnet-test-runner/` folder, which contains the standalone executable.
 
-Tag the commit first (`git tag v1.07`). `build.bat` stamps that tag into the exe as its version, and stops if the commit has no tag. The in-app updater compares this version with the latest release tag.
+Tag the commit first, for example `git tag v1.07`. `build.bat` writes that tag into the exe as its version, and stops if the commit has no tag. The in-app updater compares this version with the tag of the latest release.
 
-### Rebuilding the Frontend
+### Rebuilding the frontend
 
-Only needed if you modify files in `frontend/src/`:
+Do this only if you change files in `frontend/src/`:
 
 ```
 cd frontend
@@ -255,11 +259,11 @@ npm install
 npm run build
 ```
 
-This outputs static files to `backend/static/` which get bundled into the executable.
+The build writes static files to `backend/static/`, and `build.bat` puts them into the executable.
 
-## Test Case Format
+## Test case format
 
-Tests are defined as YAML in `backend/test_definitions/`. Each test has:
+The YAML files in `backend/test_definitions/` define the tests. Each test has these fields:
 
 ```yaml
 tests:
@@ -292,61 +296,61 @@ tests:
           Console.WriteLine("Custom code");
 ```
 
-### Step Types
+### Step types
 
 | Type | Fields | Description |
 |------|--------|-------------|
-| `command` | command, timeout, expected_exit_code, assert_output_contains, assert_output_matches, continue_on_error, long_running, run_timeout, screenshot, label | Execute a CLI command |
-| `write_file` | path, content, continue_on_error, screenshot, label | Write content to a file |
-| `screenshot` | label, delay, folder / folder_ps / settings_uri + search, continue_on_error | Open a folder in Explorer or a Settings page and capture that window (see [Screenshots](#screenshots-evidence-capture)) |
+| `command` | command, timeout, expected_exit_code, assert_output_contains, assert_output_matches, continue_on_error, long_running, run_timeout, screenshot, label | Runs a CLI command |
+| `write_file` | path, content, continue_on_error, screenshot, label | Writes content to a file |
+| `screenshot` | label, delay, folder / folder_ps / settings_uri + search, continue_on_error | Opens a folder in Explorer or a Settings page and captures that window. See [Screenshots](#screenshots-evidence-capture). |
 
-Every step gets one Step outcome: passed, warning or failed. A `command` step (including `long_running` and `run_timeout` ones) passes when its exit code matches `expected_exit_code` (default `0`) and all `assert_output_*` checks match. It is a warning when it passes but the output has an MSBuild/NuGet warning such as `warning NU1903:`. A failed step stops the test unless the step sets `continue_on_error: true`. A `command` of the form `cd <folder>` changes the working folder for the next steps, and fails when the folder does not exist. A `write_file` step fails when the file cannot be written. A step with an unknown `type` fails.
+Each step gets one Step outcome: passed, warning or failed. A `command` step passes when its exit code matches `expected_exit_code` (default `0`) and all `assert_output_*` checks match. This includes `long_running` and `run_timeout` steps. The outcome is warning when the step passes but the output has an MSBuild or NuGet warning, such as `warning NU1903:`. A failed step stops the test, unless the step sets `continue_on_error: true`. A `command` in the form `cd <folder>` changes the working folder for the next steps. It fails if the folder does not exist. A `write_file` step fails if it cannot write the file. A step with an unknown `type` fails.
 
-Three flags capture evidence without a dedicated `screenshot` step:
+Three flags capture evidence without a separate `screenshot` step:
 
-- `run_timeout: 10` on a `command` step runs a blocking GUI app (WinForms/WPF), leaves the window up for that many seconds, then closes it and passes. Adding `screenshot: true` captures the window before it closes.
-- `screenshot: true` on a plain `command` step captures the live console once the command finishes, so the command and its output are kept as a checkpoint. The **MAUI Workload** tests use it on `dotnet workload list` before install, after install, and after update (issue #77), and **Wasm-tools Workload (zip install)** before and after install (issue #78).
+- `run_timeout: 10` on a `command` step runs a GUI app that blocks, such as a WinForms or WPF app. The app window stays open for that number of seconds, then the step closes it and passes. Add `screenshot: true` to capture the window before it closes.
+- `screenshot: true` on a plain `command` step captures the console after the command finishes. This keeps the command and its output as a checkpoint. The **MAUI Workload** tests use it on `dotnet workload list` before install, after install and after update (issue #77). **Wasm-tools Workload (zip install)** uses it before and after install (issue #78).
 - `screenshot: true` on a `write_file` step writes the file, opens it in Notepad and captures the Notepad window.
 
-All three are Windows-only and are used by the C# WinForms/WPF and xUnit/NUnit/MSTest tests, the VB equivalents, the **Non-native SDK** tests, and the MAUI and wasm-tools workload tests. An optional `label` names the resulting PNG; it defaults to the project folder (`run_timeout`), `console` (plain `command`), or the file name (`write_file`), so set it explicitly when one test captures two files with the same name.
+All three flags work on Windows only. These tests use them: the C# WinForms, WPF, xUnit, NUnit and MSTest tests, the VB versions of these tests, the **Non-native SDK** tests, and the MAUI and wasm-tools workload tests. The optional `label` sets the name of the PNG. By default, the name is the project folder for `run_timeout`, `console` for a plain `command`, or the file name for `write_file`. If one test captures two files with the same name, set `label` on each step.
 
 ### Placeholders
 
-Step `command` and `write_file` `content` support these placeholders:
+The `command` of a step and the `content` of a `write_file` step support these placeholders:
 
 | Placeholder | Expands to | Example |
 |-------------|-----------|---------|
-| `{tfm}` | Target framework moniker of the SDK the run resolved | `net11.0` |
-| `{rid}` | Runtime identifier reported by `dotnet --info` (falls back to the machine's) | `win-x64`, `win-arm64` |
-| `{assets}` | Path to the bundled read-only `test_assets` folder | — |
-| `{workload_version}` | The test's **Workload set version** field (see below) | `8.0.400` |
+| `{tfm}` | Target framework moniker of the SDK that the run uses | `net11.0` |
+| `{rid}` | Runtime identifier from `dotnet --info`, or the machine's runtime identifier if `dotnet --info` has none | `win-x64`, `win-arm64` |
+| `{assets}` | Path to the bundled read-only `test_assets` folder | |
+| `{workload_version}` | The **Workload set version** field of the test. See [Workload sets](#workload-sets-selecting-the-version). | `8.0.400` |
 
-Placeholders also expand inside `assert_output_contains` and `assert_output_matches`, so a step can assert on the version it was told to install.
+Placeholders also expand in `assert_output_contains` and `assert_output_matches`. So a step can check for the version that it installed.
 
-`assert_output_matches` takes a list of Python regexes, and each one must match the output with ANSI colour codes stripped. Use it when a step expects a non-zero exit code. For example, the xUnit/NUnit/MSTest failing-suite steps expect exit code 1, but an aborted test run (`TESTRUNABORT`) or a compile error also exits with 1. Those steps therefore also require the framework to report the failing test: `(?im)\bfailed:\s*1\b|^\s*Failed \S+ \[`.
+`assert_output_matches` takes a list of Python regular expressions (regexes). Each regex must match the output after the app removes the ANSI colour codes. Use it when a step expects a non-zero exit code. For example, the failing-suite steps of xUnit, NUnit and MSTest expect exit code 1. But an aborted test run (`TESTRUNABORT`) or a compile error also exits with 1. So these steps also need the framework to report the failed test: `(?im)\bfailed:\s*1\b|^\s*Failed \S+ \[`.
 
-`{rid}` is what makes the self-contained publish tests (cases **3** and **16**) work unchanged on both x64 and ARM64 VMs: `dotnet publish -r {rid} --sc` publishes `win-arm64` on an ARM64 machine and `win-x64` on an x64 one, and `cd bin\Release\{tfm}\{rid}\publish` follows the output there.
+With `{rid}`, the self-contained publish tests (cases **3** and **16**) work on both x64 and ARM64 VMs with no change. `dotnet publish -r {rid} --sc` publishes `win-arm64` on an ARM64 machine and `win-x64` on an x64 machine. Then `cd bin\Release\{tfm}\{rid}\publish` goes to the output folder.
 
-## Adding Tests via UI
+## Adding tests in the UI
 
-1. Click "+ Add Test" in the nav bar
-2. Fill in category and title (ID is auto-generated from the title)
-3. Define steps as JSON array
-4. Save, the test appears in the test list immediately
-5. Custom tests can be deleted via the Delete button
+1. Click **+ Add Test** in the nav bar.
+2. Fill in the category and the title. The app makes the ID from the title.
+3. Write the steps as a JSON array.
+4. Click save. The test shows in the test list at once.
+5. To delete a custom test, click its **Delete** button.
 
 ## Architecture
 
 ```
 dotnet-test-runner/
 ├── backend/
-│   ├── app.py              # Flask API server + static file serving
-│   ├── executor.py         # Run orchestration: console window, records each Step outcome, SSE
-│   ├── steps.py            # Runs one Step and judges its Step outcome (all Step rules)
-│   ├── results_export.py   # Persistent run export (OneDrive / UNC share)
-│   ├── db_store.py         # Where the live database and screenshots are kept
-│   ├── sdk_source.py       # Zip SDK extraction + install-root resolution
-│   ├── nuget_config.py     # NuGet.Config feed inspection and repair
+│   ├── app.py              # Flask API server and static file serving
+│   ├── executor.py         # Runs a run: console window, records each Step outcome, SSE
+│   ├── steps.py            # Runs one Step and decides its Step outcome (all Step rules)
+│   ├── results_export.py   # Exports runs to a persistent place (OneDrive or UNC share)
+│   ├── db_store.py         # Picks where the live database and screenshots are kept
+│   ├── sdk_source.py       # Extracts zip SDKs and finds the install root
+│   ├── nuget_config.py     # Reads NuGet.Config feeds and adds missing ones
 │   ├── updater.py          # In-app update: release check, download, file swap
 │   ├── test_definitions/   # Built-in YAML test cases
 │   ├── static/             # Pre-built React frontend
@@ -364,24 +368,24 @@ dotnet-test-runner/
 └── README.md
 ```
 
-## Security Note
+## Security note
 
-This app executes commands on the local machine. It binds to **localhost only** (127.0.0.1) by default. Do not expose to a network.
+This app runs commands on the local machine. By default, it listens only on localhost (127.0.0.1). Do not open it to a network.
 
 ## Development
 
 For local development with hot-reload:
 
 ```
-# Terminal 1 — backend
+# Terminal 1: backend
 cd backend
 pip install -r requirements.txt
 python app.py
 
-# Terminal 2 — frontend (with hot-reload)
+# Terminal 2: frontend (with hot-reload)
 cd frontend
 npm install
 npm run dev
 ```
 
-Frontend dev server runs on http://localhost:3000 and proxies API calls to port 5000.
+The frontend dev server runs on http://localhost:3000 and sends API calls to port 5000.
